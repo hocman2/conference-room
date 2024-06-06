@@ -324,8 +324,11 @@ dependencies = [
 name = "confroom-server"
 version = "0.1.0"
 dependencies = [
+ "event-listener-primitives",
  "futures-util",
  "mediasoup",
+ "parking_lot 0.12.3",
+ "serde",
  "tokio",
  "tokio-macros",
  "uuid",

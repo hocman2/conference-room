@@ -3,13 +3,16 @@ mod room;
 mod participant;
 
 use mediasoup::prelude::*;
+use serde::Deserialize;
+use warp::filters::query::query;
 use warp::Filter;
 use warp::ws::{WebSocket, Ws};
 
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use room::{Room, RoomsRegistry};
+use room::{Room, RoomId, RoomsRegistry};
 use participant::ParticipantConnection;
 
 struct Server {
@@ -17,15 +20,26 @@ struct Server {
 	rooms: RoomsRegistry,
 }
 
-async fn handle_websocket(websocket: WebSocket, server_data: Arc<Mutex<Server>>) {
+#[derive(Deserialize)]
+struct QueryParameters {
+	room_id: Option<RoomId>
+}
+
+async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<Mutex<Server>>) {
 
 	let room: Room = {
 		let server_data = server_data.lock().await;
-		//Do some room creation/fetching here
-		match Room::new(&server_data.worker_manager).await {
+
+		let room_maybe = match query_parameters.room_id.clone() {
+			Some(room_id) => server_data.rooms.get_or_create(room_id, &server_data.worker_manager).await,
+			None => server_data.rooms.create_room(&server_data.worker_manager).await
+		};
+
+		match room_maybe {
 			Ok(room) => room,
 			Err(e) => {
-				eprintln!("Error creating a room: {e}");
+				eprintln!("Error creating or fetching room with id {:?}: {e}", query_parameters.room_id);
+				// We should probably send a message to the client here
 				return;
 			}
 		}
@@ -50,12 +64,15 @@ async fn main() {
     let routes =
     	warp::path!("ws")
         .and(warp::ws())
+        .and(query::<QueryParameters>())
         .and(with_server_data)
-        .map(|ws: Ws, server_data: Arc<Mutex<Server>>| {
+        .map(|ws: Ws, query_parameters: QueryParameters, server_data: Arc<Mutex<Server>>| {
         	ws.on_upgrade(move |websocket| {
-         		handle_websocket(websocket, server_data)
+         		handle_websocket(websocket, query_parameters, server_data)
          	})
         });
 
-    warp::serve(routes).run(([127, 0, 0, 1], 8000)).await;
+    let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8000);
+    println!("Serving on {socket_addr}");
+    warp::serve(routes).run(socket_addr).await;
 }
