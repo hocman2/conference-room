@@ -3,7 +3,7 @@ pub use result::Result;
 
 use mediasoup::prelude::*;
 use mediasoup::worker::WorkerLogTag;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use parking_lot::Mutex;
@@ -46,7 +46,7 @@ struct Handlers {
 }
 
 // Simple uuid representing a room's id
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize, Copy)]
 pub struct RoomId(Uuid);
 impl RoomId {
 	fn new() -> Self {

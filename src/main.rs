@@ -1,3 +1,4 @@
+mod message;
 mod websocket;
 mod room;
 mod participant;
@@ -11,7 +12,7 @@ use warp::ws::{WebSocket, Ws};
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use async_lock::Mutex;
+use parking_lot::Mutex;
 
 use room::{Room, RoomId};
 use rooms_registry::RoomsRegistry;
@@ -30,11 +31,16 @@ struct QueryParameters {
 async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<Mutex<Server>>) {
 
 	let room: Room = {
-		let server_data = server_data.lock().await;
+
+		// Retrieve internal of server data
+		let (worker_manager, rooms) = {
+			let server_data = server_data.lock();
+			(server_data.worker_manager.clone(), server_data.rooms.clone())
+		};
 
 		let room_maybe = match query_parameters.room_id.clone() {
-			Some(room_id) => server_data.rooms.get_or_create(room_id, &server_data.worker_manager).await,
-			None => server_data.rooms.create_room(&server_data.worker_manager).await
+			Some(room_id) => rooms.get_or_create(room_id, &worker_manager).await,
+			None => rooms.create_room(&worker_manager).await
 		};
 
 		match room_maybe {
@@ -47,7 +53,7 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 		}
 	};
 
-	match ParticipantConnection::new(room) {
+	match ParticipantConnection::new(room).await {
 		Ok(mut conn) => conn.run(websocket).await,
 		Err(e) => eprintln!("Error creating participant connection: {e}")
 	}

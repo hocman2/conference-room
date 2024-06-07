@@ -1,7 +1,7 @@
 mod result;
 pub use result::Result;
 
-use async_lock::Mutex;
+use parking_lot::Mutex;
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::collections::HashMap;
 use crate::room::{RoomId, WeakRoom, Room};
@@ -21,56 +21,19 @@ impl RoomsRegistry {
 		&self,
 		room_id: RoomId,
 		worker_manager: &WorkerManager) -> Result<Room> {
-			let mut rooms = self.rooms.lock().await;
 
-			match rooms.entry(room_id.clone()) {
-				Entry::Occupied(mut entry) => match entry.get().upgrade() {
-					Some(room) => Ok(room),
-					None => {
-						let room = Room::new_with_id(worker_manager, room_id).await?;
-						entry.insert(room.downgrade());
-
-						room.on_close({
-							let rooms = Arc::clone(&self.rooms);
-							let room_id = room.id();
-
-							move || {
-								tokio::spawn(async move {
-									rooms.lock().await.remove(&room_id);
-								});
-							}
-						})
-						.detach();
-
-						Ok(room)
-					}
-				},
-				Entry::Vacant(entry) => {
-					let room = Room::new_with_id(worker_manager, room_id).await?;
-					entry.insert(room.downgrade());
-
-					room.on_close({
-						let rooms = Arc::clone(&self.rooms);
-						let room_id = room.id();
-
-						move || {
-							tokio::spawn(async move {
-								rooms.lock().await.remove(&room_id);
-							});
-						}
-					})
-					.detach();
-
-					Ok(room)
-				}
+		// First lock the rooms and check if a room exists with that ID
+		if let Entry::Occupied(entry) = self.rooms.lock().entry(room_id.clone()) {
+			if let Some(room) = entry.get().upgrade() {
+				return Ok(room)
 			}
-	}
+		}
 
-	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room> {
-		let mut rooms = self.rooms.lock().await;
-		let room = Room::new(worker_manager).await?;
+		// No room exists, create a new one
+		let room = Room::new_with_id(worker_manager, room_id).await?;
 
-		rooms.insert(room.id(), room.downgrade());
+		let mut rooms = self.rooms.lock();
+		rooms.insert(room_id, room.downgrade());
 
 		room.on_close({
 			let rooms = Arc::clone(&self.rooms);
@@ -78,7 +41,29 @@ impl RoomsRegistry {
 
 			move || {
 				tokio::spawn(async move {
-					rooms.lock().await.remove(&room_id);
+					rooms.lock().remove(&room_id);
+				});
+			}
+		})
+		.detach();
+
+		Ok(room)
+	}
+
+	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room> {
+		let room = Room::new(worker_manager).await?;
+
+		self.rooms
+				.lock()
+				.insert(room.id(), room.downgrade());
+
+		room.on_close({
+			let rooms = Arc::clone(&self.rooms);
+			let room_id = room.id();
+
+			move || {
+				tokio::spawn(async move {
+					rooms.lock().remove(&room_id);
 				});
 			}
 		})
