@@ -1,4 +1,4 @@
-use warp::filters::ws::{Message, WebSocket};
+use warp::filters::ws::Message;
 
 // Convenience enum for pattern matching a warp Message representing a websocket message
 pub enum WsMessageKind {

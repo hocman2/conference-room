@@ -1,32 +1,16 @@
-mod error;
-pub use error::Result;
-
-use serde::Deserialize;
-use uuid::Uuid;
-use event_listener_primitives::{Bag, BagOnce, HandlerId};
-
-use std::{
-	collections::{
-		hash_map::Entry,
-		HashMap
-	},
-	num::{
-		NonZeroU32,
-		NonZeroU8
-	},
-	sync::{
-		Arc,
-		Weak
-	}
-};
+mod result;
+pub use result::Result;
 
 use mediasoup::prelude::*;
 use mediasoup::worker::WorkerLogTag;
-
-type PlMutex<T> = parking_lot::Mutex<T>;
-type TokioMutex<T> = tokio::sync::Mutex<T>;
-
-use crate::participant::{self, ParticipantId};
+use serde::Deserialize;
+use uuid::Uuid;
+use event_listener_primitives::{Bag, BagOnce, HandlerId};
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::num::{NonZeroU32,NonZeroU8};
+use std::sync::{Arc, Weak};
+use crate::participant::ParticipantId;
 
 fn supported_codecs() -> Vec<RtpCodecCapability> {
 	vec![
@@ -79,7 +63,7 @@ impl std::fmt::Display for RoomId {
 pub struct Inner {
 	id: RoomId,
 	router: Router,
-	clients: PlMutex<HashMap<ParticipantId, Vec<Producer>>>,
+	clients: Mutex<HashMap<ParticipantId, Vec<Producer>>>,
 	handlers: Handlers,
 }
 impl std::fmt::Display for Inner {
@@ -138,7 +122,7 @@ impl Room {
 			inner: Arc::new(Inner {
 				id,
 				router,
-				clients: PlMutex::new(HashMap::new()),
+				clients: Mutex::new(HashMap::new()),
 				handlers: Handlers::default()
 		 })
 		})
@@ -204,55 +188,5 @@ pub struct WeakRoom {
 impl WeakRoom {
 	pub fn upgrade(&self) -> Option<Room> {
 		self.inner.upgrade().map(|inner| Room {inner})
-	}
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct RoomsRegistry {
-	rooms: Arc<TokioMutex<HashMap<RoomId, WeakRoom>>>
-}
-impl RoomsRegistry {
-	pub fn new() -> Self {
-		RoomsRegistry { rooms: Arc::new(TokioMutex::new(HashMap::new())) }
-	}
-
-	pub async fn get_or_create(
-		&self,
-		room_id: RoomId,
-		worker_manager: &WorkerManager) -> Result<Room> {
-			let mut rooms = self.rooms.lock().await;
-
-			match rooms.entry(room_id.clone()) {
-				Entry::Occupied(mut entry) => match entry.get().upgrade() {
-					Some(room) => Ok(room),
-					None => {
-						let room = Room::new_with_id(worker_manager, room_id).await?;
-						entry.insert(room.downgrade());
-
-						unimplemented!("Must implement room on close event");
-
-						Ok(room)
-					}
-				},
-				Entry::Vacant(entry) => {
-					let room = Room::new_with_id(worker_manager, room_id).await?;
-					entry.insert(room.downgrade());
-
-					unimplemented!("Must implement room on close event");
-
-					Ok(room)
-				}
-			}
-	}
-
-	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room> {
-		let mut rooms = self.rooms.lock().await;
-		let room = Room::new(worker_manager).await?;
-
-		rooms.insert(room.id(), room.downgrade());
-
-		unimplemented!("Must implement room on close event");
-
-		Ok(room)
 	}
 }

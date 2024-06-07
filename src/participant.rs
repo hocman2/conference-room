@@ -1,5 +1,5 @@
-mod error;
-pub use error::Result;
+mod result;
+pub use result::Result;
 use serde::Deserialize;
 use uuid::Uuid;
 

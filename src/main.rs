@@ -1,6 +1,7 @@
 mod websocket;
 mod room;
 mod participant;
+mod rooms_registry;
 
 use mediasoup::prelude::*;
 use serde::Deserialize;
@@ -10,9 +11,10 @@ use warp::ws::{WebSocket, Ws};
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use async_lock::Mutex;
 
-use room::{Room, RoomId, RoomsRegistry};
+use room::{Room, RoomId};
+use rooms_registry::RoomsRegistry;
 use participant::ParticipantConnection;
 
 struct Server {
