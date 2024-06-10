@@ -36,6 +36,7 @@ impl std::fmt::Display for ParticipantId {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct TransportOptions {
 	id: TransportId,
 	dtls_parameters: DtlsParameters,

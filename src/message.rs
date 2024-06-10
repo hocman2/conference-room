@@ -9,6 +9,7 @@ pub enum ClientMessage {
 	Init {
 		rtp_capabilities: RtpCapabilities,
 	},
+	#[serde(rename_all="camelCase")]
 	ConnectProducerTransport {
 		dtls_parameters: DtlsParameters
 	},
