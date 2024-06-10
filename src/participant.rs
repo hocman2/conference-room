@@ -302,11 +302,11 @@ impl ParticipantConnection {
 					Ok(producer) => {
 						println!("Created {:?} producer for {:?}", kind, self.inner.id);
 						self.inner.room.add_producer(self.inner.id.clone(), producer.clone());
-						ch_tx.send(ServerMessage::Produced(producer.id().clone()).into())
+						ch_tx.send(ServerMessage::Produced{id: producer.id().clone()}.into())
 					},
 					Err(e) => {
 						eprintln!("Failed to produce {:?} for {:?}: {e}", kind, self.inner.id);
-						ch_tx.send(ServerMessage::Warning("Failed to produce, an unexpected error occured.".into()).into())
+						ch_tx.send(ServerMessage::Warning{message: "Failed to produce, an unexpected error occured.".into()}.into())
 					}
 				}
 			},
@@ -320,41 +320,41 @@ impl ParticipantConnection {
 							Ok(consumer) => {
 								println!("{producer_id} is now being consumed by participant {:?}", self.inner.id);
 								self.inner.consumers.lock().insert(consumer.id().clone(), consumer.clone());
-								ch_tx.send(ServerMessage::Consumed(consumer.id().clone()).into())
+								ch_tx.send(ServerMessage::Consumed{id: consumer.id().clone()}.into())
 							},
 							Err(e) => {
 								eprintln!("Failed to consume {producer_id} for participant {:?}: {e}", self.inner.id);
-								ch_tx.send(ServerMessage::Warning(
-									"Failed to consume producer, an unexpected error occured.".into()
-								).into())
+								ch_tx.send(ServerMessage::Warning{
+									message: "Failed to consume producer, an unexpected error occured.".into()
+								}.into())
 							}
 						}
 					},
 					None =>{
 						println!("Client tried to consume but didn't send their RTP capabilities first.");
-						ch_tx.send(ServerMessage::Warning(
-							"You must send your RTP capabilities through an Init message before being able to consume".into())
-						.into())
+						ch_tx.send(ServerMessage::Warning{ message:
+							"You must send your RTP capabilities through an Init message before being able to consume".into()
+						}.into())
 					}
 				}
 			},
-			ClientMessage::ConsumerResume(consumer_id) => {
+			ClientMessage::ConsumerResume {id} => {
 				let consumer_maybe = {
 					let consumers = self.inner.consumers.lock();
-					consumers.get(&consumer_id).map(|v| v.to_owned())
+					consumers.get(&id).map(|v| v.to_owned())
 				};
 
 				match consumer_maybe {
 					Some(consumer) => {
 						if let Err(e) =  consumer.resume().await {
-							println!("Failed to resume consumer {consumer_id} for connection {:?}: {e}", self.inner.id);
+							println!("Failed to resume consumer {id} for connection {:?}: {e}", self.inner.id);
 						}
 
 						Ok(())
 					},
 					None => {
-						println!("No consumer found for {:?} on participant {:?}", consumer_id, self.inner.id);
-						ch_tx.send(ServerMessage::Warning("No consumer found for the provided id !".into()).into())
+						println!("No consumer found for {:?} on participant {:?}", id, self.inner.id);
+						ch_tx.send(ServerMessage::Warning{message: "No consumer found for the provided id !".into()}.into())
 					}
 				}
 			}
