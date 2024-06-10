@@ -56,7 +56,12 @@ pub enum ServerMessage {
 	#[serde(rename_all="camelCase")]
 	Produced{id: ProducerId},
 	#[serde(rename_all="camelCase")]
-	Consumed{id: ConsumerId},
+	Consumed{
+		id: ConsumerId,
+		kind: MediaKind,
+		rtp_parameters: RtpParameters,
+		producer_id: ProducerId,
+	},
 	#[serde(rename_all="camelCase")]
 	Warning{message: String},
 }

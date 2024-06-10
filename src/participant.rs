@@ -321,7 +321,12 @@ impl ParticipantConnection {
 							Ok(consumer) => {
 								println!("{producer_id} is now being consumed by participant {:?}", self.inner.id);
 								self.inner.consumers.lock().insert(consumer.id().clone(), consumer.clone());
-								ch_tx.send(ServerMessage::Consumed{id: consumer.id().clone()}.into())
+								ch_tx.send(ServerMessage::Consumed{
+									id: consumer.id().clone(),
+									kind: consumer.kind().clone(),
+									rtp_parameters: consumer.rtp_parameters().clone(),
+									producer_id: consumer.producer_id().clone(),
+								}.into())
 							},
 							Err(e) => {
 								eprintln!("Failed to consume {producer_id} for participant {:?}: {e}", self.inner.id);
@@ -403,6 +408,7 @@ impl ParticipantConnection {
 
 impl Drop for ParticipantConnection {
 	fn drop(&mut self) {
+		println!("Participant {:?} is leaving", self.inner.id);
 		self.inner.room.remove_participant(&self.inner.id);
 	}
 }

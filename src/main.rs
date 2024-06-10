@@ -24,6 +24,7 @@ struct Server {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
 struct QueryParameters {
 	room_id: Option<RoomId>
 }
