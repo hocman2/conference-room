@@ -1,6 +1,26 @@
 use crate::{participant::TransportOptions, room::RoomId, websocket::WsMessageKind};
 use mediasoup::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+pub enum ClientMessage {
+	Init {
+		rtp_capabilities: RtpCapabilities,
+	},
+	ConnectProducerTransport {
+		dtls_parameters: DtlsParameters
+	},
+	ConnectConsumerTransport {
+		dtls_parameters: DtlsParameters
+	},
+	Produce {
+		kind: MediaKind,
+		rtp_parameters: RtpParameters
+	},
+	Consume {
+		producer_id: ProducerId,
+	}
+}
 
 /// Internal server messages to facilitate interactions between tasks
 /// These won't be sent to the client

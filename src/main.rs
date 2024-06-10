@@ -54,7 +54,7 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 	};
 
 	match ParticipantConnection::new(room).await {
-		Ok(mut conn) => conn.run(websocket).await,
+		Ok(conn) => conn.run(websocket).await,
 		Err(e) => eprintln!("Error creating participant connection: {e}")
 	}
 }

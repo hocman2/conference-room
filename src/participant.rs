@@ -10,6 +10,8 @@ use uuid::Uuid;
 use mediasoup::prelude::*;
 use warp::ws::WebSocket;
 use warp::filters::ws;
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 use futures_util::{stream::{SplitSink, SplitStream}, StreamExt, SinkExt};
 
@@ -45,10 +47,16 @@ struct Transports {
 	producer: WebRtcTransport,
 }
 
-pub struct ParticipantConnection {
-	id: ParticipantId,
+struct Inner {
 	transports: Transports,
 	room: Room,
+	client_rtp_capabilities: Mutex<Option<RtpCapabilities>>,
+}
+
+#[derive(Clone)]
+pub struct ParticipantConnection {
+	id: ParticipantId,
+	inner: Arc<Inner>
 }
 
 impl ParticipantConnection {
@@ -81,16 +89,21 @@ impl ParticipantConnection {
 
 		Ok(ParticipantConnection {
 			id: ParticipantId::new(),
-			transports: Transports {
-				consumer,
-				producer
-			},
-			room
+			inner: Arc::new(
+				Inner {
+					transports: Transports {
+						consumer,
+						producer
+					},
+					room,
+					client_rtp_capabilities: Mutex::new(None),
+				}
+			)
 		})
 	}
 
-	pub async fn run(&mut self, websocket: WebSocket) {
-		println!("New participant {:?} in room {:?}", self.id, self.room.id());
+	pub async fn run(&self, websocket: WebSocket) {
+		println!("New participant {:?} in room {:?}", self.id, self.inner.room.id());
 
 		let (ws_tx, ws_rx) = websocket.split();
 		let (ch_tx, ch_rx) = mpsc::unbounded_channel::<Message>();
@@ -98,9 +111,9 @@ impl ParticipantConnection {
 		// The task that'll handle web socket messages
 		{
 			let ch_tx = ch_tx.clone();
-			let participant_id = self.id.clone();
+			let conn = self.clone();
 			tokio::spawn(async move {
-				if let Err(e) = ParticipantConnection::receive_ws_messages(ws_rx, ch_tx, participant_id).await {
+				if let Err(e) = conn.receive_ws_messages(ws_rx, ch_tx).await {
 					eprintln!("Error sending message through the channel: {e}");
 				}
 			});
@@ -109,16 +122,8 @@ impl ParticipantConnection {
 		// Send a server ready message to the client
 		{
 			let ch_tx = ch_tx.clone();
-			let room_id = self.room.id().clone();
-			let router = self.room.router();
-			let transports = &self.transports;
 
-			ParticipantConnection::send_server_init(
-				room_id,
-				router,
-				transports,
-			 	ch_tx
-			);
+			self.send_server_init(ch_tx);
 		}
 
 		// This is what blocks the "run" function
@@ -126,7 +131,13 @@ impl ParticipantConnection {
 		self.handle_channel_endpoint(ws_tx, ch_rx).await;
 	}
 
-	fn send_server_init(room_id: RoomId, router: &Router, transports: &Transports, ch_tx: UnboundedSender<Message>) {
+	fn send_server_init(&self, ch_tx: UnboundedSender<Message>) {
+
+		let (room_id, router, transports) = (
+			self.inner.room.id().clone(),
+			self.inner.room.router(),
+			&self.inner.transports
+		);
 
 		let server_init = ServerMessage::Init {
 			room_id,
@@ -149,9 +160,9 @@ impl ParticipantConnection {
 	}
 
 	async fn receive_ws_messages(
+		&self,
 		mut ws_rx: SplitStream<WebSocket>,
 		ch_tx: UnboundedSender<Message>,
-		participant_id: ParticipantId,
 	) -> std::result::Result<(), SendError<Message>> {
 		let mut ws_error_counter = 0;
 		const MAX_ERRORS: u8 = 3;
@@ -177,8 +188,11 @@ impl ParticipantConnection {
 				WsMessageKind::Ping(data) => {
 					ch_tx.send(WsMessageKind::Pong(data).into())?;
 				},
-				WsMessageKind::Pong(_) => println!("Received pong from participant {:?}", participant_id),
-				WsMessageKind::Text(text) => todo!("Convert received text into ClientMessage struct (yet to create)"),
+				WsMessageKind::Pong(_) => println!("Received pong from participant {:?}", self.id),
+				WsMessageKind::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
+					Ok(client_msg) => self.handle_client_message(client_msg).await,
+					Err(e) => eprintln!("Failed to parse JSON into a valid ClientMessage: {e}")
+				},
 				WsMessageKind::Binary(bin) => {
 					// Not a critical error, just warn the client
 					println!("Received binary message: {:?}. The server does not handle binary messages", bin);
@@ -189,14 +203,82 @@ impl ParticipantConnection {
 				WsMessageKind::Close(_) => {
 					ch_tx.send(Internal::Close.into())?;
 				},
-				_ => todo!()
+				_ => unimplemented!()
 			}
 		}
 
 		Ok(())
 	}
 
-	async fn handle_channel_endpoint(&mut self, mut ws_tx: SplitSink<WebSocket, ws::Message>, mut ch_rx: UnboundedReceiver<Message>) {
+	async fn handle_client_message(&self, msg: ClientMessage) {
+		match msg {
+		    ClientMessage::Init { rtp_capabilities } => {
+				self.inner.client_rtp_capabilities.lock().replace(rtp_capabilities);
+			},
+		    ClientMessage::ConnectProducerTransport { dtls_parameters } => {
+				let producer_transport = self.inner.transports.producer.clone();
+
+				if let Err(e) = producer_transport.connect(WebRtcTransportRemoteParameters {
+					dtls_parameters
+				}).await {
+					eprintln!("Failed to connect producer transport for {:?}: {e}", self.id);
+				}
+
+				todo!("Send back a connected producer transport message to the client")
+			},
+		    ClientMessage::ConnectConsumerTransport { dtls_parameters } => {
+				let consumer_transport = self.inner.transports.consumer.clone();
+
+				if let Err(e) = consumer_transport.connect(WebRtcTransportRemoteParameters {
+					dtls_parameters
+				}).await {
+					eprintln!("Failed to connect consumer transport for {:?}: {e}", self.id)
+				}
+
+				todo!("Send back a connected consumer transport message to the client");
+			},
+		    ClientMessage::Produce { kind, rtp_parameters } => {
+				let producer_transport = self.inner.transports.producer.clone();
+				match producer_transport.produce(ProducerOptions::new(kind, rtp_parameters)).await {
+					Ok(producer) => {
+						println!("Created {:?} producer for {:?}", kind, self.id);
+						todo!("Save producer so it doesn't disappear");
+						todo!("Warn the existing participants that a new producer was added")
+					},
+					Err(e) => {
+						eprintln!("Failed to produce {:?} for {:?}: {e}", kind, self.id);
+						todo!("Warn the client ? maybe");
+					}
+				}
+			},
+		    ClientMessage::Consume { producer_id } => {
+				let consumer_transport = self.inner.transports.consumer.clone();
+				let client_rtp_capabilities = self.inner.client_rtp_capabilities.lock().clone();
+				match client_rtp_capabilities {
+					Some(rtp_capabilities) => {
+						match consumer_transport.consume(ConsumerOptions::new(producer_id, rtp_capabilities)).await {
+							Ok(consumer) => {
+								println!("{producer_id} is now being consumed by participant {:?}", self.id);
+								todo!("Save consumer so it doesn't disappear");
+								todo!("Maybe something else");
+							},
+							Err(e) => {
+								eprintln!("Failed to consume {producer_id} for participant {:?}: {e}", self.id);
+								todo!("warn the client maybe");
+							}
+						}
+					},
+					None =>{
+						println!("Client tried to consume but didn't send their RTP capabilities first.");
+						todo!("Send a warning back to the client explaining why it failed");
+					}
+				}
+
+			},
+		}
+	}
+
+	async fn handle_channel_endpoint(&self, mut ws_tx: SplitSink<WebSocket, ws::Message>, mut ch_rx: UnboundedReceiver<Message>) {
 		let mut send_error_counter = 0;
 		const MAX_ERRORS: u8 = 3;
 
