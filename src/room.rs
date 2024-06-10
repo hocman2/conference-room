@@ -85,6 +85,7 @@ impl Drop for Inner {
 
 /// A Room can hold multiple participants and send events when new participants enter or leave
 /// A room is cheap to clone and can be passed to different threads safely as it's data is heap allocated
+#[derive(Clone)]
 pub struct Room {
 	inner: Arc<Inner>
 }

@@ -1,7 +1,9 @@
 mod result;
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
+use event_listener_primitives::HandlerId;
 pub use result::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -15,12 +17,11 @@ use parking_lot::Mutex;
 
 use futures_util::{stream::{SplitSink, SplitStream}, StreamExt, SinkExt};
 
-use crate::room::RoomId;
 use crate::websocket::WsMessageKind;
 use crate::Room;
 use crate::message::*;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Copy)]
 pub struct ParticipantId(Uuid);
 impl ParticipantId {
 	fn new() -> Self {
@@ -48,14 +49,16 @@ struct Transports {
 }
 
 struct Inner {
+	id: ParticipantId,
 	transports: Transports,
 	room: Room,
 	client_rtp_capabilities: Mutex<Option<RtpCapabilities>>,
+	consumers: Mutex<HashMap<ConsumerId, Consumer>>,
+	attached_handlers: Mutex<Vec<HandlerId>>
 }
 
 #[derive(Clone)]
 pub struct ParticipantConnection {
-	id: ParticipantId,
 	inner: Arc<Inner>
 }
 
@@ -88,22 +91,24 @@ impl ParticipantConnection {
 		.map_err(|e| format!("Failed to create producer transport: {e}"))?;
 
 		Ok(ParticipantConnection {
-			id: ParticipantId::new(),
 			inner: Arc::new(
 				Inner {
+					id: ParticipantId::new(),
 					transports: Transports {
 						consumer,
 						producer
 					},
 					room,
 					client_rtp_capabilities: Mutex::new(None),
+					consumers: Mutex::new(HashMap::new()),
+					attached_handlers: Mutex::new(Vec::new()),
 				}
 			)
 		})
 	}
 
 	pub async fn run(&self, websocket: WebSocket) {
-		println!("New participant {:?} in room {:?}", self.id, self.inner.room.id());
+		println!("New participant {:?} in room {:?}", self.inner.id, self.inner.room.id());
 
 		let (ws_tx, ws_rx) = websocket.split();
 		let (ch_tx, ch_rx) = mpsc::unbounded_channel::<Message>();
@@ -122,8 +127,7 @@ impl ParticipantConnection {
 		// Send a server ready message to the client
 		{
 			let ch_tx = ch_tx.clone();
-
-			self.send_server_init(ch_tx);
+			self.init_connection(ch_tx);
 		}
 
 		// This is what blocks the "run" function
@@ -131,8 +135,8 @@ impl ParticipantConnection {
 		self.handle_channel_endpoint(ws_tx, ch_rx).await;
 	}
 
-	fn send_server_init(&self, ch_tx: UnboundedSender<Message>) {
-
+	/// Prepares the connection and sends a ServerMessage::Init when done
+	fn init_connection(&self, ch_tx: UnboundedSender<Message>) {
 		let (room_id, router, transports) = (
 			self.inner.room.id().clone(),
 			self.inner.room.router(),
@@ -156,7 +160,62 @@ impl ParticipantConnection {
 			},
 		};
 
-		let _ = ch_tx.send(server_init.into());
+		if let Err(e) = ch_tx.send(server_init.into()) {
+			eprintln!("Failed to send message through the channel: {e}");
+		}
+
+		let room = self.inner.room.clone();
+		{
+			let mut attached_handlers = self.inner.attached_handlers.lock();
+
+			attached_handlers.push(room.on_producer_add({
+				let ch_tx = ch_tx.clone();
+				let own_id = self.inner.id.clone();
+
+				move |participant_id, producer| {
+					if *participant_id == own_id { return; }
+
+					let result = ch_tx.send(ServerMessage::ProducerAdded {
+						participant_id: participant_id.to_owned(),
+						producer_id: producer.id().clone()
+					}.into());
+
+					if let Err(e) = result {
+						eprintln!("Failed to send message through the channel: {e}");
+					}
+				}
+			}));
+
+			attached_handlers.push(room.on_producer_remove({
+				let ch_tx = ch_tx.clone();
+				let own_id = self.inner.id.clone();
+
+				move |participant_id, producer_id| {
+					if *participant_id == own_id { return; }
+
+					let result = ch_tx.send(ServerMessage::ProducerRemoved {
+						participant_id: participant_id.to_owned(),
+						producer_id: producer_id.to_owned()
+					}.into());
+
+					if let Err(e) = result {
+						eprintln!("Failed to send message through the channel: {e}");
+					}
+				}
+			}));
+		}
+
+		for (participant_id, producer_id) in room.get_all_producers() {
+			let result = ch_tx.send(ServerMessage::ProducerAdded {
+				participant_id,
+				producer_id,
+			}.into());
+
+			// This is getting repetitive ...
+			if let Err(e) = result {
+				eprintln!("Failed to send message through the channel: {e}");
+			}
+		}
 	}
 
 	async fn receive_ws_messages(
@@ -164,6 +223,7 @@ impl ParticipantConnection {
 		mut ws_rx: SplitStream<WebSocket>,
 		ch_tx: UnboundedSender<Message>,
 	) -> std::result::Result<(), SendError<Message>> {
+		// Cut connection when there are too many errors
 		let mut ws_error_counter = 0;
 		const MAX_ERRORS: u8 = 3;
 
@@ -188,9 +248,9 @@ impl ParticipantConnection {
 				WsMessageKind::Ping(data) => {
 					ch_tx.send(WsMessageKind::Pong(data).into())?;
 				},
-				WsMessageKind::Pong(_) => println!("Received pong from participant {:?}", self.id),
+				WsMessageKind::Pong(_) => println!("Received pong from participant {:?}", self.inner.id),
 				WsMessageKind::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
-					Ok(client_msg) => self.handle_client_message(client_msg).await,
+					Ok(client_msg) => self.handle_client_message(client_msg, ch_tx.clone()).await?,
 					Err(e) => eprintln!("Failed to parse JSON into a valid ClientMessage: {e}")
 				},
 				WsMessageKind::Binary(bin) => {
@@ -202,18 +262,19 @@ impl ParticipantConnection {
 				},
 				WsMessageKind::Close(_) => {
 					ch_tx.send(Internal::Close.into())?;
+					break;
 				},
-				_ => unimplemented!()
 			}
 		}
 
 		Ok(())
 	}
 
-	async fn handle_client_message(&self, msg: ClientMessage) {
+	async fn handle_client_message(&self, msg: ClientMessage, ch_tx: UnboundedSender<Message>) -> std::result::Result<(), SendError<Message>> {
 		match msg {
 		    ClientMessage::Init { rtp_capabilities } => {
 				self.inner.client_rtp_capabilities.lock().replace(rtp_capabilities);
+				Ok(())
 			},
 		    ClientMessage::ConnectProducerTransport { dtls_parameters } => {
 				let producer_transport = self.inner.transports.producer.clone();
@@ -221,60 +282,82 @@ impl ParticipantConnection {
 				if let Err(e) = producer_transport.connect(WebRtcTransportRemoteParameters {
 					dtls_parameters
 				}).await {
-					eprintln!("Failed to connect producer transport for {:?}: {e}", self.id);
+					eprintln!("Failed to connect producer transport for {:?}: {e}", self.inner.id);
 				}
 
-				todo!("Send back a connected producer transport message to the client")
+				ch_tx.send(ServerMessage::ConnectedProducerTransport.into())
 			},
 		    ClientMessage::ConnectConsumerTransport { dtls_parameters } => {
 				let consumer_transport = self.inner.transports.consumer.clone();
 
-				if let Err(e) = consumer_transport.connect(WebRtcTransportRemoteParameters {
-					dtls_parameters
-				}).await {
-					eprintln!("Failed to connect consumer transport for {:?}: {e}", self.id)
+				if let Err(e) = consumer_transport.connect(WebRtcTransportRemoteParameters { dtls_parameters }).await {
+					eprintln!("Failed to connect consumer transport for {:?}: {e}", self.inner.id)
 				}
 
-				todo!("Send back a connected consumer transport message to the client");
+				ch_tx.send(ServerMessage::ConnectedConsumerTransport.into())
 			},
 		    ClientMessage::Produce { kind, rtp_parameters } => {
 				let producer_transport = self.inner.transports.producer.clone();
 				match producer_transport.produce(ProducerOptions::new(kind, rtp_parameters)).await {
 					Ok(producer) => {
-						println!("Created {:?} producer for {:?}", kind, self.id);
-						todo!("Save producer so it doesn't disappear");
-						todo!("Warn the existing participants that a new producer was added")
+						println!("Created {:?} producer for {:?}", kind, self.inner.id);
+						self.inner.room.add_producer(self.inner.id.clone(), producer.clone());
+						ch_tx.send(ServerMessage::Produced(producer.id().clone()).into())
 					},
 					Err(e) => {
-						eprintln!("Failed to produce {:?} for {:?}: {e}", kind, self.id);
-						todo!("Warn the client ? maybe");
+						eprintln!("Failed to produce {:?} for {:?}: {e}", kind, self.inner.id);
+						ch_tx.send(ServerMessage::Warning("Failed to produce, an unexpected error occured.".into()).into())
 					}
 				}
 			},
 		    ClientMessage::Consume { producer_id } => {
 				let consumer_transport = self.inner.transports.consumer.clone();
 				let client_rtp_capabilities = self.inner.client_rtp_capabilities.lock().clone();
+
 				match client_rtp_capabilities {
 					Some(rtp_capabilities) => {
 						match consumer_transport.consume(ConsumerOptions::new(producer_id, rtp_capabilities)).await {
 							Ok(consumer) => {
-								println!("{producer_id} is now being consumed by participant {:?}", self.id);
-								todo!("Save consumer so it doesn't disappear");
-								todo!("Maybe something else");
+								println!("{producer_id} is now being consumed by participant {:?}", self.inner.id);
+								self.inner.consumers.lock().insert(consumer.id().clone(), consumer.clone());
+								ch_tx.send(ServerMessage::Consumed(consumer.id().clone()).into())
 							},
 							Err(e) => {
-								eprintln!("Failed to consume {producer_id} for participant {:?}: {e}", self.id);
-								todo!("warn the client maybe");
+								eprintln!("Failed to consume {producer_id} for participant {:?}: {e}", self.inner.id);
+								ch_tx.send(ServerMessage::Warning(
+									"Failed to consume producer, an unexpected error occured.".into()
+								).into())
 							}
 						}
 					},
 					None =>{
 						println!("Client tried to consume but didn't send their RTP capabilities first.");
-						todo!("Send a warning back to the client explaining why it failed");
+						ch_tx.send(ServerMessage::Warning(
+							"You must send your RTP capabilities through an Init message before being able to consume".into())
+						.into())
 					}
 				}
-
 			},
+			ClientMessage::ConsumerResume(consumer_id) => {
+				let consumer_maybe = {
+					let consumers = self.inner.consumers.lock();
+					consumers.get(&consumer_id).map(|v| v.to_owned())
+				};
+
+				match consumer_maybe {
+					Some(consumer) => {
+						if let Err(e) =  consumer.resume().await {
+							println!("Failed to resume consumer {consumer_id} for connection {:?}: {e}", self.inner.id);
+						}
+
+						Ok(())
+					},
+					None => {
+						println!("No consumer found for {:?} on participant {:?}", consumer_id, self.inner.id);
+						ch_tx.send(ServerMessage::Warning("No consumer found for the provided id !".into()).into())
+					}
+				}
+			}
 		}
 	}
 
@@ -291,7 +374,7 @@ impl ParticipantConnection {
 			    },
 				Message::Internal(int_msg) => match int_msg {
 					Internal::Close => {
-						todo!("Must send some event to warn the room that this participant leaves here");
+						// End connection
 						return; /* bye bye */
 					}
 				},
@@ -314,5 +397,11 @@ impl ParticipantConnection {
 				}
 			}
 		}
+	}
+}
+
+impl Drop for ParticipantConnection {
+	fn drop(&mut self) {
+		self.inner.room.remove_participant(&self.inner.id);
 	}
 }

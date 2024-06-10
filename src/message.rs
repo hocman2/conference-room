@@ -1,4 +1,4 @@
-use crate::{participant::TransportOptions, room::RoomId, websocket::WsMessageKind};
+use crate::{participant::{ParticipantId, TransportOptions}, room::RoomId, websocket::WsMessageKind};
 use mediasoup::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,8 @@ pub enum ClientMessage {
 	},
 	Consume {
 		producer_id: ProducerId,
-	}
+	},
+	ConsumerResume(ConsumerId),
 }
 
 /// Internal server messages to facilitate interactions between tasks
@@ -37,6 +38,13 @@ pub enum ServerMessage {
 		consumer_transport_options: TransportOptions,
 		producer_transport_options: TransportOptions,
 	},
+	ConnectedConsumerTransport,
+	ConnectedProducerTransport,
+	ProducerAdded { participant_id: ParticipantId, producer_id: ProducerId },
+	ProducerRemoved{ participant_id: ParticipantId, producer_id: ProducerId },
+	Produced(ProducerId),
+	Consumed(ConsumerId),
+	Warning(String),
 }
 
 /// Different types of messages that can be sent by the server

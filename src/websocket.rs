@@ -7,8 +7,6 @@ pub enum WsMessageKind {
 	Text(String),
 	Binary(Vec<u8>),
 	Close(Option<(u16, String)>),
-	// Consider an error if this is the match case
-	Unexpected(Vec<u8>)
 }
 
 impl TryFrom<Message> for WsMessageKind {
