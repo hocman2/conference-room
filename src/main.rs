@@ -12,6 +12,7 @@ use warp::ws::{WebSocket, Ws};
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
+use std::env;
 use parking_lot::Mutex;
 
 use room::{Room, RoomId};
@@ -27,6 +28,14 @@ struct Server {
 #[serde(rename_all="camelCase")]
 struct QueryParameters {
 	room_id: Option<RoomId>
+}
+
+const SSL_MODE_ENV_KEY: &str = "SSL_MODE";
+const SSL_CERT_PATH_ENV_KEY: &str = "SSL_CERT_PATH";
+const SSL_KEY_PATH_ENV_KEY: &str = "SSL_KEY_PATH";
+struct SSLModeSettings {
+	cert_path: String,
+	key_path: String
 }
 
 async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<Mutex<Server>>) {
@@ -60,6 +69,39 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 	}
 }
 
+fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
+	let secure_mode = match env::var(SSL_MODE_ENV_KEY) {
+    	Ok(val) =>  match val.parse::<i32>() {
+     		Ok(val) => val > 0,
+       		Err(e) => panic!("Error parsing SSL_MODE value: {e}")
+     	},
+    	Err(_) => {
+     		println!("{SSL_MODE_ENV_KEY} was not found. Running in non-secure mode.");
+     		println!("The environment variable {SSL_MODE_ENV_KEY}=1 is required on an environment using HTTPS");
+       		false
+     	}
+    };
+
+	if !secure_mode {
+		return None;
+	}
+
+	let cert_path = match env::var(SSL_CERT_PATH_ENV_KEY) {
+		Ok(path) => path,
+		Err(_) => panic!("The {SSL_CERT_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1")
+	};
+
+	let key_path = match env::var(SSL_KEY_PATH_ENV_KEY) {
+		Ok(path) => path,
+		Err(_) => panic!("The {SSL_KEY_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1")
+	};
+
+	Some(SSLModeSettings {
+		cert_path,
+		key_path
+	})
+}
+
 #[tokio::main]
 async fn main() {
 	let server_data = Arc::new(Mutex::new(
@@ -82,6 +124,19 @@ async fn main() {
         });
 
     let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8000);
-    println!("Serving on {socket_addr}");
-    warp::serve(routes).run(socket_addr).await;
+
+    // Stupid syntax
+    let server = warp::serve(routes);
+    if let Some(ssl_settings) = get_ssl_mode_settings() {
+    	println!("Serving on {socket_addr}");
+    	server
+     		.tls()
+       		.cert_path(ssl_settings.cert_path)
+       		.key_path(ssl_settings.key_path)
+     		.run(socket_addr).await;
+    } else {
+    	println!("Serving on {socket_addr}");
+    	server.run(socket_addr).await;
+    }
+
 }

@@ -354,6 +354,8 @@ impl ParticipantConnection {
 					Some(consumer) => {
 						if let Err(e) =  consumer.resume().await {
 							println!("Failed to resume consumer {id} for connection {:?}: {e}", self.inner.id);
+						} else {
+							println!("Resumed consumer {id} for connection {:?}", self.inner.id);
 						}
 
 						Ok(())
