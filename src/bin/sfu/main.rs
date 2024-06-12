@@ -3,8 +3,10 @@ mod room;
 mod participant;
 mod rooms_registry;
 
+use confroom_server::MONITORING_SFU_PORT;
 use mediasoup::prelude::*;
 use serde::Deserialize;
+use tokio::net::TcpListener;
 use warp::filters::query::query;
 use warp::Filter;
 use warp::ws::{WebSocket, Ws};
@@ -103,6 +105,9 @@ fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
 
 #[tokio::main]
 async fn main() {
+
+	let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), MONITORING_SFU_PORT)).await.unwrap().accept().await.unwrap();
+
 	let server_data = Arc::new(Mutex::new(
 		Server {
 			worker_manager: WorkerManager::new(),
