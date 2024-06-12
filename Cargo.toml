@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-lock = "3.4.0"
 event-listener-primitives = "2.0.1"
 futures-util = "0.3.30"
 mediasoup = "0.17.0"
