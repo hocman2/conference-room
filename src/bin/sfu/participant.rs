@@ -1,4 +1,5 @@
 mod result;
+extern crate confroom_server as server;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
@@ -17,8 +18,8 @@ use parking_lot::Mutex;
 
 use futures_util::{stream::{SplitSink, SplitStream}, StreamExt, SinkExt};
 
-use crate::websocket::WsMessageKind;
-use crate::Room;
+use server::websocket::WsMessageKind;
+use crate::room::Room;
 use crate::message::*;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Copy)]

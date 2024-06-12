@@ -1,5 +1,4 @@
 mod message;
-mod websocket;
 mod room;
 mod participant;
 mod rooms_registry;
