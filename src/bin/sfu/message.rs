@@ -1,7 +1,8 @@
 extern crate confroom_server as server;
+use confroom_server::uuids::{ParticipantId, RoomId};
 use server::websocket::WsMessageKind;
 
-use crate::{participant::{ParticipantId, TransportOptions}, room::RoomId};
+use crate::participant::TransportOptions;
 use mediasoup::prelude::*;
 use serde::{Deserialize, Serialize};
 

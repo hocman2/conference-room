@@ -4,12 +4,12 @@ extern crate confroom_server as server;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
+use confroom_server::uuids::ParticipantId;
 use event_listener_primitives::HandlerId;
 pub use result::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{error::SendError, UnboundedReceiver, UnboundedSender};
-use uuid::Uuid;
 use mediasoup::prelude::*;
 use warp::ws::WebSocket;
 use warp::filters::ws;
@@ -21,20 +21,6 @@ use futures_util::{stream::{SplitSink, SplitStream}, StreamExt, SinkExt};
 use server::websocket::WsMessageKind;
 use crate::room::Room;
 use crate::message::*;
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Copy)]
-pub struct ParticipantId(Uuid);
-impl ParticipantId {
-	fn new() -> Self {
-		ParticipantId(Uuid::new_v4())
-	}
-}
-
-impl std::fmt::Display for ParticipantId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		std::fmt::Display::fmt(&self.0, f)
-	}
-}
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
