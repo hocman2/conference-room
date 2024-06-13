@@ -1,6 +1,8 @@
 pub mod handshake;
 use crate::uuids::{ParticipantId, RoomId};
 
+pub const SFU_PORT: u16 = 12346;
+
 /// The kind of events a Monitor subscribes to
 pub enum MonitoringEventCategory {
 	Global,
@@ -9,6 +11,7 @@ pub enum MonitoringEventCategory {
 
 /// Events sent by the SFU to a Monitor process
 pub enum SFUEvent {
+	ServerStarted,
 	RoomCreated { id: RoomId },
 	RoomDestroyed { id: RoomId },
 	ParticipantEntered {

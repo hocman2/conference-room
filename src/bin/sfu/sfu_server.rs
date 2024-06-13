@@ -1,9 +1,10 @@
 use std::{net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
 
-use confroom_server::uuids::RoomId;
+use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
 use mediasoup::worker_manager::WorkerManager;
 use parking_lot::Mutex;
 use serde::Deserialize;
+use std::sync::mpsc::Sender;
 use crate::participant::ParticipantConnection;
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
@@ -17,56 +18,61 @@ struct QueryParameters {
 	room_id: Option<RoomId>
 }
 
-struct Description {
+pub struct SFUServerConfig {
 	pub port: u16,
 }
 
-struct RuntimeData {
+pub struct SFUServerRuntime {
 	pub worker_manager: WorkerManager,
 	pub rooms: RoomsRegistry,
+	pub event_sender: Option<Sender<SFUEvent>>
 }
 
-pub struct WebServer {
-	pub description: Description,
-	pub runtime: Mutex<RuntimeData>
+pub struct SFUServer {
+	pub description: SFUServerConfig,
+	pub runtime: Arc<Mutex<SFUServerRuntime>>,
 }
 
-impl RuntimeData {
+impl SFUServerRuntime {
 	fn new() -> Self {
-		RuntimeData { worker_manager: WorkerManager::new(), rooms: RoomsRegistry::new() }
+		SFUServerRuntime {
+			worker_manager: WorkerManager::new(),
+			rooms: RoomsRegistry::new(),
+			event_sender: None
+		}
 	}
 }
 
-impl Default for Description {
+impl Default for SFUServerConfig {
 	fn default() -> Self {
-		Description {
+		SFUServerConfig {
 			port: 8000
 		}
 	}
 }
 
-impl Default for WebServer {
+impl Default for SFUServer {
 	fn default() -> Self {
-		WebServer {
-			description: Description::default(),
-			runtime: Mutex::new(RuntimeData::new())
+		SFUServer {
+			description: SFUServerConfig::default(),
+			runtime: Arc::new(Mutex::new(SFUServerRuntime::new())),
 		}
 	}
 }
 
-impl WebServer {
-	pub async fn run(self: Arc<Self>) {
+impl SFUServer {
+	pub async fn run(&self) {
 
 		let with_server_data = warp::any().map({
-			let s = self.clone();
-			move || s.clone()
+			let runtime = self.runtime.clone();
+			move || runtime.clone()
 		});
 
 	   	let routes = warp::path!("ws")
 	        .and(warp::ws())
 	        .and(query::<QueryParameters>())
 	        .and(with_server_data)
-	        .map(|ws: Ws, query_parameters: QueryParameters, server_data: Arc<WebServer>| {
+	        .map(|ws: Ws, query_parameters: QueryParameters, server_data: Arc<Mutex<SFUServerRuntime>>| {
 	        	ws.on_upgrade(move |websocket| {
 	         		handle_websocket(websocket, query_parameters, server_data)
 	         	})
@@ -87,16 +93,30 @@ impl WebServer {
 	    	println!("Serving on {socket_addr}");
 	    	server.run(socket_addr).await;
 	    }
+
+		self.send_sfu_event(SFUEvent::ServerStarted);
+	}
+
+	pub fn attach_event_sender(&self, sender: Sender<SFUEvent>) {
+		self.runtime.lock().event_sender = Some(sender);
+	}
+
+	fn send_sfu_event(&self, evt: SFUEvent) {
+		let runtime = self.runtime.lock();
+		if let Some(sender) = &runtime.event_sender {
+			// maybe add error handling here
+			sender.send(evt);
+		}
 	}
 }
 
-async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<WebServer>) {
+async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<Mutex<SFUServerRuntime>>) {
 
 	let room: Room = {
 
 		// Retrieve internal of server data
 		let (worker_manager, rooms) = {
-			let server_data = server_data.runtime.lock();
+			let server_data = server_data.lock();
 			(server_data.worker_manager.clone(), server_data.rooms.clone())
 		};
 
