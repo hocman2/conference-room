@@ -1,16 +1,14 @@
 mod result;
 pub use result::Result;
 
+use confroom_server::uuids::{RoomId, ParticipantId};
 use mediasoup::prelude::*;
 use mediasoup::worker::WorkerLogTag;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::num::{NonZeroU32,NonZeroU8};
 use std::sync::{Arc, Weak};
-use crate::participant::ParticipantId;
 
 fn supported_codecs() -> Vec<RtpCodecCapability> {
 	vec![
@@ -43,20 +41,6 @@ struct Handlers {
 	producer_add: Bag<Arc<dyn Fn(&ParticipantId, &Producer) + Send + Sync + 'static>, ParticipantId, Producer>,
 	producer_remove: Bag<Arc<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync + 'static>, ParticipantId, ProducerId>,
 	close: BagOnce<Box<dyn FnOnce() + Send + 'static>>
-}
-
-// Simple uuid representing a room's id
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize, Copy)]
-pub struct RoomId(Uuid);
-impl RoomId {
-	fn new() -> Self {
-		RoomId(Uuid::new_v4())
-	}
-}
-impl std::fmt::Display for RoomId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		std::fmt::Display::fmt(&self.0, f)
-	}
 }
 
 // Room internal

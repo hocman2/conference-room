@@ -4,7 +4,8 @@ pub use result::Result;
 use parking_lot::Mutex;
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::collections::HashMap;
-use crate::room::{RoomId, WeakRoom, Room};
+use confroom_server::uuids::RoomId;
+use crate::room::{WeakRoom, Room};
 use mediasoup::prelude::*;
 
 
