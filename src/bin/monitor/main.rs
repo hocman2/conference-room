@@ -1,4 +1,4 @@
-use confroom_server::monitoring_handshake::*;
+use confroom_server::monitoring::handshake::*;
 use confroom_server::MONITORING_SFU_PORT;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
