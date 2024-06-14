@@ -8,7 +8,7 @@ mod sfu_server;
 
 use confroom_server::monitoring::SFUEvent;
 use monitor_dispatch::MonitorDispatch;
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 use sfu_server::{SFUServer, SFUServerConfig};
 use clap::Parser;
 
@@ -21,7 +21,7 @@ enum MonitoringMode {
 
 #[derive(clap::Parser)]
 struct Args {
-	#[arg(short='m', long="monitoring", value_enum)]
+	#[arg(short='m', long="monitoring", value_enum, default_value_t=MonitoringMode::Secure)]
 	monitoring_mode: MonitoringMode,
 	#[arg(short='p', long="port", default_value_t=8000)]
 	port: u16
@@ -40,11 +40,12 @@ async fn main() {
 	};
 
 	if args.monitoring_mode != MonitoringMode::NoMonitoring {
-		let (evt_tx, evt_rx) = mpsc::channel::<SFUEvent>();
-		sfu_server.attach_event_sender(evt_tx);
+		let channel = mpsc::unbounded_channel::<SFUEvent>();
+
+		sfu_server.attach_evt_sender(channel.0.clone());
 
 		tokio::spawn(async move {
-				MonitorDispatch::new().run(evt_rx).await;
+			MonitorDispatch::new().run(channel).await;
 		});
 	}
 
