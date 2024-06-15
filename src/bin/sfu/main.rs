@@ -42,10 +42,8 @@ async fn main() {
 	if args.monitoring_mode != MonitoringMode::NoMonitoring {
 		let channel = mpsc::unbounded_channel::<SFUEvent>();
 
-		sfu_server.attach_evt_sender(channel.0.clone());
-
 		tokio::spawn(async move {
-			MonitorDispatch::new().run(channel).await;
+			MonitorDispatch::run(channel).await;
 		});
 	}
 

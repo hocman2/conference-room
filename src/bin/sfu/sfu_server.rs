@@ -5,7 +5,7 @@ use mediasoup::worker_manager::WorkerManager;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
-use crate::participant::ParticipantConnection;
+use crate::{monitor_dispatch::MonitorDispatch, participant::ParticipantConnection};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
 use crate::security::get_ssl_mode_settings;
@@ -25,7 +25,6 @@ pub struct SFUServerConfig {
 pub struct SFUServerRuntime {
 	pub worker_manager: WorkerManager,
 	pub rooms: RoomsRegistry,
-	sender: Option<UnboundedSender<SFUEvent>>,
 }
 
 pub struct SFUServer {
@@ -38,7 +37,6 @@ impl SFUServerRuntime {
 		SFUServerRuntime {
 			worker_manager: WorkerManager::new(),
 			rooms: RoomsRegistry::new(),
-			sender: None,
 		}
 	}
 }
@@ -94,19 +92,7 @@ impl SFUServer {
 	    	server.run(socket_addr).await;
 	    }
 
-		self.send_sfu_event(SFUEvent::ServerStarted);
-	}
-
-	pub fn attach_evt_sender(&self, sender: UnboundedSender<SFUEvent>) {
-		self.runtime.lock().sender = Some(sender);
-	}
-
-	fn send_sfu_event(&self, evt: SFUEvent) {
-		let runtime = self.runtime.lock();
-		if let Some(sender) = &runtime.sender {
-			// maybe add error handling here
-			sender.send(evt);
-		}
+		MonitorDispatch::send_event(SFUEvent::ServerStarted);
 	}
 }
 

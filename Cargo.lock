@@ -433,6 +433,7 @@ dependencies = [
  "clap_derive",
  "event-listener-primitives",
  "futures-util",
+ "lazy_static",
  "mediasoup",
  "parking_lot 0.12.3",
  "serde",
@@ -1046,6 +1047,12 @@ checksum = "507460a910eb7b32ee961886ff48539633b788a36b65692b95f225b844c82553"
 dependencies = [
  "regex-automata",
 ]
+
+[[package]]
+name = "lazy_static"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
