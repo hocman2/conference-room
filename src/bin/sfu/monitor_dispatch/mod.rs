@@ -1,4 +1,4 @@
-mod monitor;
+mod monitor_connection;
 mod error;
 use error::Error;
 
@@ -6,7 +6,7 @@ use log::{debug, info};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use lazy_static::lazy_static;
-use monitor::{Monitor, MonitorToDispatchMessage};
+use monitor_connection::{MonitorConnection, MonitorToDispatchMessage};
 use parking_lot::{Mutex, RwLock};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -19,16 +19,16 @@ lazy_static! {
 /// Data returned by a call of "new" on the MonitorDispatch
 struct MonitorDispatchConstructionPayload {
 	dispatch: MonitorDispatch,
-	event_receiver: UnboundedReceiver<SFUEvent>,
-	monitor_message_receiver: UnboundedReceiver<MonitorToDispatchMessage>,
+	sfu_evt_rx: UnboundedReceiver<SFUEvent>,
+	dispatch_msg_rx: UnboundedReceiver<MonitorToDispatchMessage>,
 }
 
 struct Inner {
-	monitors: Vec<Monitor>,
+	monitors: Vec<MonitorConnection>,
 	/// An internal sender if the dispatch itself needs to send a message
-	/// Safe to unwrap after run() has been called
-	event_sender: UnboundedSender<SFUEvent>,
-	monitor_message_sender: UnboundedSender<MonitorToDispatchMessage>,
+	sfu_evt_tx: UnboundedSender<SFUEvent>,
+	/// This is the sender that gets passed around to new monitor connections for communication to the dispatch
+	dispatch_msg_tx: UnboundedSender<MonitorToDispatchMessage>,
 }
 
 #[derive(Clone)]
@@ -37,48 +37,27 @@ pub struct MonitorDispatch {
 }
 
 impl MonitorDispatch {
-
-	fn new() -> MonitorDispatchConstructionPayload {
-
-		let event_channel = mpsc::unbounded_channel();
-		let monitor_message_channel = mpsc::unbounded_channel();
-
-		let dispatch = MonitorDispatch {
-			inner: Arc::new(Mutex::new(Inner {
-				monitors: Vec::new(),
-				event_sender: event_channel.0,
-				monitor_message_sender: monitor_message_channel.0,
-			}))
-		};
-
-		MonitorDispatchConstructionPayload {
-			dispatch,
-			event_receiver: event_channel.1,
-			monitor_message_receiver: monitor_message_channel.1,
-		}
-	}
-
-	pub fn add_monitor(&self, monitor: Monitor) {
-		self.inner.lock().monitors.push(monitor);
-	}
-
-	/// Creates a new MonitorDispatch instance and inserts it in the global DISPATCH variable
-	fn create_global_dispatch() -> (UnboundedReceiver<SFUEvent>, UnboundedReceiver<MonitorToDispatchMessage>) {
-		let mut dispatch = DISPATCH.write();
-		match *dispatch {
-			None => {
-				let payload = MonitorDispatch::new();
-				dispatch.replace(payload.dispatch);
-
-				return (payload.event_receiver, payload.monitor_message_receiver);
+	// this is the actual API function to send events
+	/// Orders the global MonitorDispatch instance to send an event through the network to interested monitors
+	pub fn send_event(evt: SFUEvent) -> Result<(), Error> {
+		match *DISPATCH.read() {
+			Some(ref dispatch) => {
+				// 🚂
+				dispatch.inner.lock().sfu_evt_tx.send(evt).unwrap();
+				Ok(())
 			},
-			Some(_) => panic!("Attempted to run a MonitorDispatch when one is already running")
+			None => {
+				// TODO: panic if not in NoMonitor mode
+				Err(Error::NoDispatchRunning)
+			}
 		}
 	}
 
+	/// Run a MonitorDispatch ready to receive SFUEvents from anywhere using the `MonitorDispatch::send()` function
+	/// Only one MonitorDispatch can run through the program, attempting to run another will panic.
 	pub async fn run() {
 
-		let (event_receiver, monitor_msg_receiver) = MonitorDispatch::create_global_dispatch();
+		let (sfu_evt_rx, dispatch_msg_rx) = MonitorDispatch::create_global_dispatch();
 		// DISPATCH can safely be unwrapped now
 
 		let dispatch = DISPATCH.read().clone().unwrap();
@@ -95,27 +74,65 @@ impl MonitorDispatch {
 		tokio::spawn({
 			let other_dispatch = dispatch.clone();
 			async move {
-				other_dispatch.receive_monitor_message(monitor_msg_receiver).await;
+				other_dispatch.receive_monitor_message(dispatch_msg_rx).await;
 			}
 		});
 
 		info!("Monitor dispatch is running");
-		dispatch.receive_events(event_receiver).await;
+		dispatch.receive_events(sfu_evt_rx).await;
 	}
 
-	async fn receive_events(self, mut receiver: UnboundedReceiver<SFUEvent>) {
-		while let Some(evt) = receiver.recv().await {
+	fn new() -> MonitorDispatchConstructionPayload {
+
+		let sfu_evt_channel = mpsc::unbounded_channel();
+		let dispatch_msg_channel = mpsc::unbounded_channel();
+
+		let dispatch = MonitorDispatch {
+			inner: Arc::new(Mutex::new(Inner {
+				monitors: Vec::new(),
+				sfu_evt_tx: sfu_evt_channel.0,
+				dispatch_msg_tx: dispatch_msg_channel.0,
+			}))
+		};
+
+		MonitorDispatchConstructionPayload {
+			dispatch,
+			sfu_evt_rx: sfu_evt_channel.1,
+			dispatch_msg_rx: dispatch_msg_channel.1,
+		}
+	}
+
+	/// Creates a new MonitorDispatch instance and inserts it in the global DISPATCH variable
+	fn create_global_dispatch() -> (UnboundedReceiver<SFUEvent>, UnboundedReceiver<MonitorToDispatchMessage>) {
+		let mut dispatch = DISPATCH.write();
+		match *dispatch {
+			None => {
+				let payload = MonitorDispatch::new();
+				dispatch.replace(payload.dispatch);
+
+				return (payload.sfu_evt_rx, payload.dispatch_msg_rx);
+			},
+			Some(_) => panic!("Attempted to run a MonitorDispatch when one is already running")
+		}
+	}
+
+	async fn receive_events(self, mut sfu_evt_rx: UnboundedReceiver<SFUEvent>) {
+		while let Some(evt) = sfu_evt_rx.recv().await {
 
 			let monitors = &self.inner.lock().monitors;
 
 			for monitor in monitors.iter() {
-				if monitor.is_interested(&evt) {
+				if monitor.is_interested_in(&evt) {
 					monitor.send(evt.clone());
 				}
 			}
 		}
 
 		info!("Monitor dispatch closing");
+	}
+
+	fn add_monitor(&self, monitor: MonitorConnection) {
+		self.inner.lock().monitors.push(monitor);
 	}
 
 	async fn accept_incoming_connections(self) -> Result<(), Error> {
@@ -127,44 +144,28 @@ impl MonitorDispatch {
 			let (stream, _) = listener.accept().await?;
 			// Todo: Make sure this is not a malicious connection, initiate the handshake, etc.
 
-			let message_sender = self.inner.lock().monitor_message_sender.clone();
-			self.add_monitor(Monitor::new(stream, message_sender));
+			let dispatch_msg_tx = self.inner.lock().dispatch_msg_tx.clone();
+			self.add_monitor(MonitorConnection::new(stream, dispatch_msg_tx));
 			MonitorDispatch::send_event(SFUEvent::MonitorAccepted)?;
 		}
 	}
 
-	async fn receive_monitor_message(self, mut monitor_message_receiver: UnboundedReceiver<MonitorToDispatchMessage>) {
-		while let Some(msg) = monitor_message_receiver.recv().await {
+	async fn receive_monitor_message(self, mut dispatch_msg_rx: UnboundedReceiver<MonitorToDispatchMessage>) {
+		while let Some(msg) = dispatch_msg_rx.recv().await {
 			match msg {
 				MonitorToDispatchMessage::Close(id) => {
 					let monitors = &mut self.inner.lock().monitors;
-					if let Some(index) = monitors.iter().position(|m| m.id == id) {
+					if let Some(index) = monitors.iter().position(|m| m.id() == id) {
 						monitors.remove(index);
 					}
 				}
 				MonitorToDispatchMessage::SendMeThisMessage(id, evt) => {
 					let monitors = &self.inner.lock().monitors;
-					if let Some(monitor) = monitors.iter().find(|m| m.id == id) {
+					if let Some(monitor) = monitors.iter().find(|m| m.id() == id) {
 						monitor.send(evt);
 					}
 				}
 			}
 		}
 	}
-
-	/// Orders the global MonitorDispatch instance to send an event through the network to interested monitors
-	pub fn send_event(evt: SFUEvent) -> Result<(), Error> {
-		match *DISPATCH.read() {
-			Some(ref dispatch) => {
-				// 🚂
-				dispatch.inner.lock().event_sender.send(evt).unwrap();
-				Ok(())
-			},
-			None => {
-				// TODO: panic if not in NoMonitor mode
-				Err(Error::NoDispatchRunning)
-			}
-		}
-	}
-
 }
