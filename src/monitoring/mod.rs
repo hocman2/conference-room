@@ -33,8 +33,9 @@ pub enum SFUEvent {
 	MonitorAccepted,
 	/// This is kind of a pointless event because it's unlikely for a monitor to be accepted before the server starts
 	ServerStarted,
-	RoomCreated { id: RoomId },
-	RoomDestroyed { id: RoomId },
+	ServerClosed,
+	RoomOpened { id: RoomId },
+	RoomClosed { id: RoomId },
 	ParticipantEntered {
 		room_id: RoomId,
 		participant_id: ParticipantId

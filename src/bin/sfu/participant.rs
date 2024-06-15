@@ -3,6 +3,7 @@ extern crate confroom_server as server;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
+use confroom_server::monitoring::SFUEvent;
 use confroom_server::uuids::ParticipantId;
 use event_listener_primitives::HandlerId;
 use serde::Serialize;
@@ -17,6 +18,7 @@ use parking_lot::Mutex;
 use futures_util::{stream::{SplitSink, SplitStream}, StreamExt, SinkExt};
 
 use server::websocket::WsMessageKind;
+use crate::monitor_dispatch::MonitorDispatch;
 use crate::room::Room;
 use crate::message::*;
 
@@ -97,6 +99,10 @@ impl ParticipantConnection {
 
 	pub async fn run(&self, websocket: WebSocket) {
 		println!("New participant {:?} in room {:?}", self.inner.id, self.inner.room.id());
+		let _ = MonitorDispatch::send_event(SFUEvent::ParticipantEntered {
+			room_id: self.inner.room.id(),
+			participant_id: self.inner.id.clone(),
+		});
 
 		let (ws_tx, ws_rx) = websocket.split();
 		let (ch_tx, ch_rx) = mpsc::unbounded_channel::<Message>();
@@ -399,5 +405,10 @@ impl Drop for ParticipantConnection {
 	fn drop(&mut self) {
 		println!("Participant {:?} is leaving", self.inner.id);
 		self.inner.room.remove_participant(&self.inner.id);
+
+		let _ = MonitorDispatch::send_event(SFUEvent::ParticipantLeft {
+			room_id: self.inner.room.id(),
+			participant_id: self.inner.id
+		});
 	}
 }

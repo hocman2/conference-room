@@ -77,6 +77,8 @@ impl SFUServer {
 
 	    let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), self.description.port);
 
+		let _ = MonitorDispatch::send_event(SFUEvent::ServerStarted);
+
 	    // Stupid syntax
 	    let server = warp::serve(routes);
 	    if let Some(ssl_settings) = get_ssl_mode_settings() {
@@ -91,7 +93,7 @@ impl SFUServer {
 	    	server.run(socket_addr).await;
 	    }
 
-		let _ = MonitorDispatch::send_event(SFUEvent::ServerStarted);
+		let _ = MonitorDispatch::send_event(SFUEvent::ServerClosed);
 	}
 }
 

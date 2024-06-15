@@ -1,3 +1,4 @@
+use confroom_server::monitoring::SFUEvent;
 use confroom_server::uuids::{RoomId, ParticipantId};
 use mediasoup::prelude::*;
 use mediasoup::worker::WorkerLogTag;
@@ -6,6 +7,8 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::num::{NonZeroU32,NonZeroU8};
 use std::sync::{Arc, Weak};
+
+use crate::monitor_dispatch::MonitorDispatch;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -102,6 +105,8 @@ impl Room {
 			supported_codecs()
 		)).await?;
 
+		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
+
 		Ok(Room {
 			inner: Arc::new(Inner {
 				id,
@@ -161,6 +166,10 @@ impl Room {
 	}
 
 	pub fn on_close<F: FnOnce() + Send + 'static>(&self, callback: F) -> HandlerId {
+		let _ = MonitorDispatch::send_event(SFUEvent::RoomClosed {
+			id: self.id()
+		});
+
 		self.inner.handlers.close.add(Box::new(callback))
 	}
 }

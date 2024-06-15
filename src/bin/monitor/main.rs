@@ -37,8 +37,7 @@ async fn main() {
 			Ok(bytes_read) => {
 				match bincode::deserialize::<SFUEvent>(&buf[..bytes_read]) {
 					Ok(evt) => match evt {
-						SFUEvent::MonitorAccepted => println!("Received monitor accepted !"),
-						_ => ()
+						_ => println!("Received event !")
 					},
 					Err(e) => eprintln!("{e}")
 				}

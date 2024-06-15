@@ -55,8 +55,8 @@ impl Monitor {
 				matches!(evt,
 					SFUEvent::MonitorAccepted |
 					SFUEvent::ServerStarted |
-					SFUEvent::RoomCreated{..} |
-					SFUEvent::RoomDestroyed {..}
+					SFUEvent::RoomOpened{..} |
+					SFUEvent::RoomClosed {..}
 				)
 			},
 		    MonitoringEventCategory::Room(_listening_room_id) => {
