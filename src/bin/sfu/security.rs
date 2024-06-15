@@ -2,6 +2,8 @@
 
 use std::env;
 
+use log::error;
+
 const SSL_MODE_ENV_KEY: &str = "SSL_MODE";
 const SSL_CERT_PATH_ENV_KEY: &str = "SSL_CERT_PATH";
 const SSL_KEY_PATH_ENV_KEY: &str = "SSL_KEY_PATH";
@@ -14,7 +16,11 @@ pub fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
 	let secure_mode = match env::var(SSL_MODE_ENV_KEY) {
     	Ok(val) =>  match val.parse::<i32>() {
      		Ok(val) => val > 0,
-       		Err(e) => panic!("Error parsing SSL_MODE value: {e}")
+       		Err(e) => {
+         		println!("{val} is not a valid SSL_MODE value");
+           		error!("Error parsing SSL_MODE value: {e}");
+             	return None;
+         	}
      	},
     	Err(_) => {
      		println!("{SSL_MODE_ENV_KEY} was not found. Running in non-secure mode.");
@@ -29,12 +35,18 @@ pub fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
 
 	let cert_path = match env::var(SSL_CERT_PATH_ENV_KEY) {
 		Ok(path) => path,
-		Err(_) => panic!("The {SSL_CERT_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1")
+		Err(_) => {
+			println!("The {SSL_CERT_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1");
+			return None;
+		}
 	};
 
 	let key_path = match env::var(SSL_KEY_PATH_ENV_KEY) {
 		Ok(path) => path,
-		Err(_) => panic!("The {SSL_KEY_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1")
+		Err(_) => {
+			println!("The {SSL_KEY_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1");
+			return None;
+		}
 	};
 
 	Some(SSLModeSettings {

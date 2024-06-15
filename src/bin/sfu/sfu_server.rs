@@ -4,7 +4,6 @@ use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
 use mediasoup::worker_manager::WorkerManager;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use tokio::sync::mpsc::UnboundedSender;
 use crate::{monitor_dispatch::MonitorDispatch, participant::ParticipantConnection};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
@@ -81,18 +80,18 @@ impl SFUServer {
 	    // Stupid syntax
 	    let server = warp::serve(routes);
 	    if let Some(ssl_settings) = get_ssl_mode_settings() {
-	    	println!("Serving on {socket_addr}");
+	    	println!("Serving on {socket_addr} in secure mode");
 	    	server
 	     		.tls()
 	       		.cert_path(ssl_settings.cert_path)
 	       		.key_path(ssl_settings.key_path)
 	     		.run(socket_addr).await;
 	    } else {
-	    	println!("Serving on {socket_addr}");
+	    	println!("Serving on {socket_addr} in non-secure mode");
 	    	server.run(socket_addr).await;
 	    }
 
-		MonitorDispatch::send_event(SFUEvent::ServerStarted);
+		let _ = MonitorDispatch::send_event(SFUEvent::ServerStarted);
 	}
 }
 

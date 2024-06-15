@@ -1,6 +1,3 @@
-mod result;
-pub use result::Result;
-
 use confroom_server::uuids::{RoomId, ParticipantId};
 use mediasoup::prelude::*;
 use mediasoup::worker::WorkerLogTag;
@@ -9,6 +6,8 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::num::{NonZeroU32,NonZeroU8};
 use std::sync::{Arc, Weak};
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 fn supported_codecs() -> Vec<RtpCodecCapability> {
 	vec![
@@ -74,11 +73,11 @@ pub struct Room {
 	inner: Arc<Inner>
 }
 impl Room {
-	pub async fn new(worker_manager: &WorkerManager) -> Result<Self> {
+	pub async fn new(worker_manager: &WorkerManager) -> Result<Self, Error> {
 		Self::new_with_id(worker_manager, RoomId::new()).await
 	}
 
-	pub async fn new_with_id(worker_manager: &WorkerManager, id: RoomId) -> Result<Self> {
+	pub async fn new_with_id(worker_manager: &WorkerManager, id: RoomId) -> Result<Self, Error> {
 		let worker = worker_manager.create_worker({
 			let mut settings = WorkerSettings::default();
 			settings.log_tags = vec![

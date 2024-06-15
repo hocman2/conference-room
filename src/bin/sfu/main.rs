@@ -6,9 +6,7 @@ mod monitor_dispatch;
 mod security;
 mod sfu_server;
 
-use confroom_server::monitoring::SFUEvent;
 use monitor_dispatch::MonitorDispatch;
-use tokio::sync::mpsc;
 use sfu_server::{SFUServer, SFUServerConfig};
 use clap::Parser;
 
@@ -29,7 +27,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-
+	env_logger::init();
 	let args = Args::parse();
 
 	let sfu_server = SFUServer {
@@ -40,10 +38,8 @@ async fn main() {
 	};
 
 	if args.monitoring_mode != MonitoringMode::NoMonitoring {
-		let channel = mpsc::unbounded_channel::<SFUEvent>();
-
 		tokio::spawn(async move {
-			MonitorDispatch::run(channel).await;
+			MonitorDispatch::run().await;
 		});
 	}
 

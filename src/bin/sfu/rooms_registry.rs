@@ -1,6 +1,3 @@
-mod result;
-pub use result::Result;
-
 use parking_lot::Mutex;
 use std::{collections::hash_map::Entry, sync::Arc};
 use std::collections::HashMap;
@@ -8,6 +5,7 @@ use confroom_server::uuids::RoomId;
 use crate::room::{WeakRoom, Room};
 use mediasoup::prelude::*;
 
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Default, Clone)]
 pub struct RoomsRegistry {
@@ -21,7 +19,7 @@ impl RoomsRegistry {
 	pub async fn get_or_create(
 		&self,
 		room_id: RoomId,
-		worker_manager: &WorkerManager) -> Result<Room> {
+		worker_manager: &WorkerManager) -> Result<Room, Error> {
 
 		// First lock the rooms and check if a room exists with that ID
 		if let Entry::Occupied(entry) = self.rooms.lock().entry(room_id.clone()) {
@@ -51,7 +49,7 @@ impl RoomsRegistry {
 		Ok(room)
 	}
 
-	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room> {
+	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room, Error> {
 		let room = Room::new(worker_manager).await?;
 
 		self.rooms
