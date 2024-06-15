@@ -98,7 +98,7 @@ impl ParticipantConnection {
 	}
 
 	pub async fn run(&self, websocket: WebSocket) {
-		println!("New participant {:?} in room {:?}", self.inner.id, self.inner.room.id());
+		log::info!("New participant {} in room {}", self.inner.id, self.inner.room.id());
 		let _ = MonitorDispatch::send_event(SFUEvent::ParticipantEntered {
 			room_id: self.inner.room.id(),
 			participant_id: self.inner.id.clone(),
@@ -242,14 +242,14 @@ impl ParticipantConnection {
 				WsMessageKind::Ping(data) => {
 					ch_tx.send(WsMessageKind::Pong(data).into())?;
 				},
-				WsMessageKind::Pong(_) => println!("Received pong from participant {:?}", self.inner.id),
+				WsMessageKind::Pong(_) => log::info!("Received pong from participant {}", self.inner.id),
 				WsMessageKind::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
 					Ok(client_msg) => self.handle_client_message(client_msg, ch_tx.clone()).await?,
 					Err(e) => eprintln!("Failed to parse JSON into a valid ClientMessage: {e}")
 				},
 				WsMessageKind::Binary(bin) => {
 					// Not a critical error, just warn the client
-					println!("Received binary message: {:?}. The server does not handle binary messages", bin);
+					log::warn!("Received binary message: {:?}. The server does not handle binary messages", bin);
 					ch_tx.send(WsMessageKind::Text(
 						"Received binary data. Binary messages are not handled by the server. Please provide data in an expected JSON format".into())
 					.into())?;
@@ -294,7 +294,7 @@ impl ParticipantConnection {
 				let producer_transport = self.inner.transports.producer.clone();
 				match producer_transport.produce(ProducerOptions::new(kind, rtp_parameters)).await {
 					Ok(producer) => {
-						println!("Created {:?} producer for {:?}", kind, self.inner.id);
+						log::info!("Created {:?} producer for {:?}", kind, self.inner.id);
 						self.inner.room.add_producer(self.inner.id.clone(), producer.clone());
 						ch_tx.send(ServerMessage::Produced{id: producer.id().clone()}.into())
 					},
@@ -312,7 +312,7 @@ impl ParticipantConnection {
 					Some(rtp_capabilities) => {
 						match consumer_transport.consume(ConsumerOptions::new(producer_id, rtp_capabilities)).await {
 							Ok(consumer) => {
-								println!("{producer_id} is now being consumed by participant {:?}", self.inner.id);
+								log::info!("{producer_id} is now being consumed by participant {}", self.inner.id);
 								self.inner.consumers.lock().insert(consumer.id().clone(), consumer.clone());
 								ch_tx.send(ServerMessage::Consumed{
 									id: consumer.id().clone(),
@@ -330,7 +330,6 @@ impl ParticipantConnection {
 						}
 					},
 					None =>{
-						println!("Client tried to consume but didn't send their RTP capabilities first.");
 						ch_tx.send(ServerMessage::Warning{ message:
 							"You must send your RTP capabilities through an Init message before being able to consume".into()
 						}.into())
@@ -346,15 +345,14 @@ impl ParticipantConnection {
 				match consumer_maybe {
 					Some(consumer) => {
 						if let Err(e) =  consumer.resume().await {
-							println!("Failed to resume consumer {id} for connection {:?}: {e}", self.inner.id);
+							eprintln!("Failed to resume consumer {id} for {:?}: {e}", self.inner.id);
 						} else {
-							println!("Resumed consumer {id} for connection {:?}", self.inner.id);
+							log::info!("Resumed consumer {id} for {:?}", self.inner.id);
 						}
 
 						Ok(())
 					},
 					None => {
-						println!("No consumer found for {:?} on participant {:?}", id, self.inner.id);
 						ch_tx.send(ServerMessage::Warning{message: "No consumer found for the provided id !".into()}.into())
 					}
 				}
@@ -390,10 +388,10 @@ impl ParticipantConnection {
 			if let Err(e) = result {
 				send_error_counter += 1;
 				if send_error_counter < MAX_ERRORS {
-					eprintln!("Error sending message: {e}\n{send_error_counter}/{MAX_ERRORS}; Keeping connection alive");
+					log::warn!("Error sending message: {e}\n{send_error_counter}/{MAX_ERRORS}; Keeping connection alive");
 					continue;
 				} else {
-					eprintln!("Error sending message: {e}\n{send_error_counter}/{MAX_ERRORS}; Closing connection");
+					log::error!("Error sending message: {e}\n{send_error_counter}/{MAX_ERRORS}; Closing connection");
 					break;
 				}
 			}
@@ -403,7 +401,7 @@ impl ParticipantConnection {
 
 impl Drop for ParticipantConnection {
 	fn drop(&mut self) {
-		println!("Participant {:?} is leaving", self.inner.id);
+		log::info!("Participant {} is leaving", self.inner.id);
 		self.inner.room.remove_participant(&self.inner.id);
 
 		let _ = MonitorDispatch::send_event(SFUEvent::ParticipantLeft {

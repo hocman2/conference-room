@@ -64,7 +64,7 @@ impl std::fmt::Display for Inner {
 }
 impl Drop for Inner {
 	fn drop(&mut self) {
-		println!("Room {:?} closed", self.id);
+		println!("Room {} closed", self.id);
 		self.handlers.close.call_simple();
 	}
 }
@@ -106,6 +106,7 @@ impl Room {
 		)).await?;
 
 		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
+		println!("Room {id} opened");
 
 		Ok(Room {
 			inner: Arc::new(Inner {
