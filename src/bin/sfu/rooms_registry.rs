@@ -39,9 +39,7 @@ impl RoomsRegistry {
 			let room_id = room.id();
 
 			move || {
-				tokio::spawn(async move {
-					rooms.lock().remove(&room_id);
-				});
+				rooms.lock().remove(&room_id);
 			}
 		})
 		.detach();
