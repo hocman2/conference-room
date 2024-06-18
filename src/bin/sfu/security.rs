@@ -4,9 +4,9 @@ use std::env;
 
 use log::error;
 
-const TLS_MODE_ENV_KEY: &str = "SSL_MODE";
-const TLS_CERT_PATH_ENV_KEY: &str = "SSL_CERT_PATH";
-const TLS_KEY_PATH_ENV_KEY: &str = "SSL_KEY_PATH";
+const TLS_MODE_ENV_KEY: &str = "TLS_MODE";
+const TLS_CERT_PATH_ENV_KEY: &str = "TLS_CERT_PATH";
+const TLS_KEY_PATH_ENV_KEY: &str = "TLS_KEY_PATH";
 pub struct TLSModeSettings {
 	pub cert_path: String,
 	pub key_path: String
