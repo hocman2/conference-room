@@ -1,6 +1,7 @@
 extern crate confroom_server as server;
 
 use std::collections::HashMap;
+use std::env;
 use std::net::{IpAddr, Ipv4Addr};
 
 use confroom_server::monitoring::SFUEvent;
@@ -24,6 +25,8 @@ use crate::message::*;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
+const ANNOUNCED_ADDRESS_ENV_KEY: &str = "PUBLIC_IP";
+
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct TransportOptions {
@@ -44,6 +47,7 @@ struct Inner {
 	room: Room,
 	client_rtp_capabilities: Mutex<Option<RtpCapabilities>>,
 	consumers: Mutex<HashMap<ConsumerId, Consumer>>,
+	producers: Mutex<Vec<Producer>>,
 	attached_handlers: Mutex<Vec<HandlerId>>
 }
 
@@ -57,10 +61,18 @@ impl ParticipantConnection {
 
 		let router = room.router();
 
+		let (listen_ip, announced_address) = {
+			if let Ok(public_ip) = env::var(ANNOUNCED_ADDRESS_ENV_KEY) {
+				(Ipv4Addr::UNSPECIFIED, Some(public_ip))
+			} else {
+				(Ipv4Addr::LOCALHOST, None)
+			}
+		};
+
 		let transport_opts = WebRtcTransportOptions::new(WebRtcTransportListenInfos::new(ListenInfo {
 			protocol: Protocol::Udp,
-			ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-			announced_address: None,
+			ip: IpAddr::V4(listen_ip),
+			announced_address,
 			port: None,
 			port_range: None,
 			flags: None,
@@ -91,6 +103,7 @@ impl ParticipantConnection {
 					room,
 					client_rtp_capabilities: Mutex::new(None),
 					consumers: Mutex::new(HashMap::new()),
+					producers: Mutex::new(Vec::new()),
 					attached_handlers: Mutex::new(Vec::new()),
 				}
 			)
@@ -296,7 +309,9 @@ impl ParticipantConnection {
 					Ok(producer) => {
 						log::info!("Created {:?} producer for {:?}", kind, self.inner.id);
 						self.inner.room.add_producer(self.inner.id.clone(), producer.clone());
-						ch_tx.send(ServerMessage::Produced{id: producer.id().clone()}.into())
+						ch_tx.send(ServerMessage::Produced{id: producer.id().clone()}.into())?;
+						self.inner.producers.lock().push(producer);
+						Ok(())
 					},
 					Err(e) => {
 						eprintln!("Failed to produce {:?} for {:?}: {e}", kind, self.inner.id);

@@ -4,16 +4,16 @@ use std::env;
 
 use log::error;
 
-const SSL_MODE_ENV_KEY: &str = "SSL_MODE";
-const SSL_CERT_PATH_ENV_KEY: &str = "SSL_CERT_PATH";
-const SSL_KEY_PATH_ENV_KEY: &str = "SSL_KEY_PATH";
-pub struct SSLModeSettings {
+const TLS_MODE_ENV_KEY: &str = "SSL_MODE";
+const TLS_CERT_PATH_ENV_KEY: &str = "SSL_CERT_PATH";
+const TLS_KEY_PATH_ENV_KEY: &str = "SSL_KEY_PATH";
+pub struct TLSModeSettings {
 	pub cert_path: String,
 	pub key_path: String
 }
 
-pub fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
-	let secure_mode = match env::var(SSL_MODE_ENV_KEY) {
+pub fn get_tls_mode_settings() -> Option<TLSModeSettings> {
+	let secure_mode = match env::var(TLS_MODE_ENV_KEY) {
     	Ok(val) =>  match val.parse::<i32>() {
      		Ok(val) => val > 0,
        		Err(e) => {
@@ -23,8 +23,8 @@ pub fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
          	}
      	},
     	Err(_) => {
-     		println!("{SSL_MODE_ENV_KEY} was not found. Running in non-secure mode.");
-     		println!("The environment variable {SSL_MODE_ENV_KEY}=1 is required on an environment using HTTPS");
+     		println!("{TLS_MODE_ENV_KEY} was not found. Running in non-secure mode.");
+     		println!("The environment variable {TLS_MODE_ENV_KEY}=1 is required on an environment using HTTPS");
        		false
      	}
     };
@@ -33,23 +33,23 @@ pub fn get_ssl_mode_settings() -> Option<SSLModeSettings> {
 		return None;
 	}
 
-	let cert_path = match env::var(SSL_CERT_PATH_ENV_KEY) {
+	let cert_path = match env::var(TLS_CERT_PATH_ENV_KEY) {
 		Ok(path) => path,
 		Err(_) => {
-			println!("The {SSL_CERT_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1");
+			println!("The {TLS_CERT_PATH_ENV_KEY} environment variable is required when {TLS_MODE_ENV_KEY}=1");
 			return None;
 		}
 	};
 
-	let key_path = match env::var(SSL_KEY_PATH_ENV_KEY) {
+	let key_path = match env::var(TLS_KEY_PATH_ENV_KEY) {
 		Ok(path) => path,
 		Err(_) => {
-			println!("The {SSL_KEY_PATH_ENV_KEY} environment variable is required when {SSL_MODE_ENV_KEY}=1");
+			println!("The {TLS_KEY_PATH_ENV_KEY} environment variable is required when {TLS_MODE_ENV_KEY}=1");
 			return None;
 		}
 	};
 
-	Some(SSLModeSettings {
+	Some(TLSModeSettings {
 		cert_path,
 		key_path
 	})

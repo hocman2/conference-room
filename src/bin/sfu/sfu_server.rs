@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::{monitor_dispatch::MonitorDispatch, participant::ParticipantConnection};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
-use crate::security::get_ssl_mode_settings;
+use crate::security::get_tls_mode_settings;
 use warp::{filters::{query::query, ws::{WebSocket, Ws}}, Filter};
 
 
@@ -81,12 +81,12 @@ impl SFUServer {
 
 	    // Stupid syntax
 	    let server = warp::serve(routes);
-	    if let Some(ssl_settings) = get_ssl_mode_settings() {
+	    if let Some(tls_settings) = get_tls_mode_settings() {
 	    	println!("Serving on {socket_addr} in secure mode");
 	    	server
 	     		.tls()
-	       		.cert_path(ssl_settings.cert_path)
-	       		.key_path(ssl_settings.key_path)
+	       		.cert_path(tls_settings.cert_path)
+	       		.key_path(tls_settings.key_path)
 	     		.run(socket_addr).await;
 	    } else {
 	    	println!("Serving on {socket_addr} in non-secure mode");
