@@ -1,10 +1,10 @@
-use std::{net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
+use std::{env, net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
 
 use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
 use mediasoup::worker_manager::WorkerManager;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use crate::{monitor_dispatch::MonitorDispatch, participant::ParticipantConnection};
+use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
 use crate::security::get_tls_mode_settings;
@@ -78,6 +78,10 @@ impl SFUServer {
 	    let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), self.description.port);
 
 		let _ = MonitorDispatch::send_event(SFUEvent::ServerStarted);
+
+		if let Err(_) = env::var(ANNOUNCED_ADDRESS_ENV_KEY) {
+			println!("The {ANNOUNCED_ADDRESS_ENV_KEY} environment variable isn't set. The server will only listen to localhost participants");
+		}
 
 	    // Stupid syntax
 	    let server = warp::serve(routes);

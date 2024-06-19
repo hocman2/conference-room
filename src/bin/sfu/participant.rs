@@ -25,7 +25,7 @@ use crate::message::*;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-const ANNOUNCED_ADDRESS_ENV_KEY: &str = "PUBLIC_IP";
+pub const ANNOUNCED_ADDRESS_ENV_KEY: &str = "PUBLIC_IP";
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
