@@ -19,7 +19,7 @@ impl RoomsRegistry {
 	pub async fn get_or_create(
 		&self,
 		room_id: RoomId,
-		worker_manager: &WorkerManager) -> Result<Room, Error> {
+		router: Router) -> Result<Room, Error> {
 
 		// First lock the rooms and check if a room exists with that ID
 		if let Entry::Occupied(entry) = self.rooms.lock().entry(room_id.clone()) {
@@ -29,7 +29,7 @@ impl RoomsRegistry {
 		}
 
 		// No room exists, create a new one
-		let room = Room::new_with_id(worker_manager, room_id).await?;
+		let room = Room::new_with_id(router, room_id).await?;
 
 		let mut rooms = self.rooms.lock();
 		rooms.insert(room_id, room.downgrade());
@@ -47,8 +47,8 @@ impl RoomsRegistry {
 		Ok(room)
 	}
 
-	pub async fn create_room(&self, worker_manager: &WorkerManager) -> Result<Room, Error> {
-		let room = Room::new(worker_manager).await?;
+	pub async fn create_room(&self, router: Router) -> Result<Room, Error> {
+		let room = Room::new(router).await?;
 
 		self.rooms
 				.lock()

@@ -437,6 +437,7 @@ dependencies = [
  "lazy_static",
  "log",
  "mediasoup",
+ "num_cpus",
  "parking_lot 0.12.3",
  "serde",
  "serde_json",

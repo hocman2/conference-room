@@ -1,15 +1,13 @@
 use std::{env, net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
 
 use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
-use mediasoup::worker_manager::WorkerManager;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}};
+use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}, router_dispatch::{self, RouterDispatch, RouterDispatchConfig}};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
 use crate::security::get_tls_mode_settings;
 use warp::{filters::{query::query, ws::{WebSocket, Ws}}, Filter};
-
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -18,24 +16,34 @@ struct QueryParameters {
 }
 
 pub struct SFUServerConfig {
-	pub port: u16,
+	port: u16,
 }
 
 pub struct SFUServerRuntime {
-	pub worker_manager: WorkerManager,
-	pub rooms: RoomsRegistry,
+	router_dispatch: RouterDispatch,
+	rooms: RoomsRegistry,
 }
 
+#[derive(Clone)]
 pub struct SFUServer {
-	pub description: SFUServerConfig,
+	port: u16,
 	pub runtime: Arc<Mutex<SFUServerRuntime>>,
 }
 
 impl SFUServerRuntime {
-	fn new() -> Self {
+	fn new(dispatch_config: RouterDispatchConfig) -> Self {
 		SFUServerRuntime {
-			worker_manager: WorkerManager::new(),
+			router_dispatch: RouterDispatch::new(dispatch_config),
 			rooms: RoomsRegistry::new(),
+		}
+	}
+}
+
+impl Default for SFUServerRuntime {
+	fn default() -> Self {
+		SFUServerRuntime {
+			router_dispatch: RouterDispatch::default(),
+			rooms: RoomsRegistry::new()
 		}
 	}
 }
@@ -43,7 +51,7 @@ impl SFUServerRuntime {
 impl Default for SFUServerConfig {
 	fn default() -> Self {
 		SFUServerConfig {
-			port: 8000
+			port: 8000,
 		}
 	}
 }
@@ -51,31 +59,37 @@ impl Default for SFUServerConfig {
 impl Default for SFUServer {
 	fn default() -> Self {
 		SFUServer {
-			description: SFUServerConfig::default(),
-			runtime: Arc::new(Mutex::new(SFUServerRuntime::new())),
+			port: SFUServerConfig::default().port,
+			runtime: Arc::new(Mutex::new(SFUServerRuntime::default())),
 		}
 	}
 }
 
 impl SFUServer {
-	pub async fn run(&self) {
+	pub fn new(config: SFUServerConfig) -> Self {
+		SFUServer {
+			port: config.port,
+			..Default::default()
+		}
+	}
 
+	pub async fn run(&self) {
 		let with_server_data = warp::any().map({
-			let runtime = self.runtime.clone();
-			move || runtime.clone()
+			let server = self.clone();
+			move || server.clone()
 		});
 
 	   	let routes = warp::path!("ws")
 	        .and(warp::ws())
 	        .and(query::<QueryParameters>())
 	        .and(with_server_data)
-	        .map(|ws: Ws, query_parameters: QueryParameters, server_data: Arc<Mutex<SFUServerRuntime>>| {
+	        .map(|ws: Ws, query_parameters: QueryParameters, server: SFUServer| {
 	        	ws.on_upgrade(move |websocket| {
-	         		handle_websocket(websocket, query_parameters, server_data)
+	         		handle_websocket(websocket, query_parameters, server)
 	         	})
 	    });
 
-	    let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), self.description.port);
+	    let socket_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), self.port);
 
 		let _ = MonitorDispatch::send_event(SFUEvent::ServerStarted);
 
@@ -101,19 +115,23 @@ impl SFUServer {
 	}
 }
 
-async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server_data: Arc<Mutex<SFUServerRuntime>>) {
+async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server: SFUServer) {
+
+	let mut router_dispatch = server.runtime.lock().router_dispatch.clone();
+	let router = match router_dispatch.create_router().await {
+		Ok(router) => router,
+		Err(e) => {
+			log::error!("Failed to create router, no room will be fetched/created: {e}");
+			// Return early, don't create any connection
+			return;
+		}
+	};
 
 	let room: Room = {
-
-		// Retrieve internal of server data
-		let (worker_manager, rooms) = {
-			let server_data = server_data.lock();
-			(server_data.worker_manager.clone(), server_data.rooms.clone())
-		};
-
+		let rooms = server.runtime.lock().rooms.clone();
 		let room_maybe = match query_parameters.room_id.clone() {
-			Some(room_id) => rooms.get_or_create(room_id, &worker_manager).await,
-			None => rooms.create_room(&worker_manager).await
+			Some(room_id) => rooms.get_or_create(room_id, router).await,
+			None => rooms.create_room(router).await
 		};
 
 		match room_maybe {
@@ -128,6 +146,9 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 
 	match ParticipantConnection::new(room).await {
 		Ok(conn) => conn.run(websocket).await,
-		Err(e) => eprintln!("Error creating participant connection: {e}")
+		Err(e) => {
+			log::error!("{e}");
+			eprintln!("Error creating participant connection");
+		}
 	}
 }

@@ -1,42 +1,14 @@
 use confroom_server::monitoring::SFUEvent;
 use confroom_server::uuids::{RoomId, ParticipantId};
 use mediasoup::prelude::*;
-use mediasoup::worker::WorkerLogTag;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::num::{NonZeroU32,NonZeroU8};
 use std::sync::{Arc, Weak};
 
 use crate::monitor_dispatch::MonitorDispatch;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
-
-fn supported_codecs() -> Vec<RtpCodecCapability> {
-	vec![
-	   RtpCodecCapability::Audio {
-	            mime_type: MimeTypeAudio::Opus,
-	            preferred_payload_type: None,
-	            clock_rate: NonZeroU32::new(48000).unwrap(),
-	            channels: NonZeroU8::new(2).unwrap(),
-	            parameters: RtpCodecParametersParameters::from([("useinbandfec", 1_u32.into())]),
-	            rtcp_feedback: vec![RtcpFeedback::TransportCc],
-		},
-		RtpCodecCapability::Video {
-			mime_type: MimeTypeVideo::Vp8,
-			preferred_payload_type: None,
-			clock_rate: NonZeroU32::new(90000).unwrap(),
-			parameters: RtpCodecParametersParameters::default(),
-			rtcp_feedback: vec![
-                RtcpFeedback::Nack,
-                RtcpFeedback::NackPli,
-                RtcpFeedback::CcmFir,
-                RtcpFeedback::GoogRemb,
-                RtcpFeedback::TransportCc,
-            	]
-		},
-	]
-}
 
 #[derive(Default)]
 struct Handlers {
@@ -76,35 +48,11 @@ pub struct Room {
 	inner: Arc<Inner>
 }
 impl Room {
-	pub async fn new(worker_manager: &WorkerManager) -> Result<Self, Error> {
-		Self::new_with_id(worker_manager, RoomId::new()).await
+	pub async fn new(router: Router) -> Result<Self, Error> {
+		Self::new_with_id(router, RoomId::new()).await
 	}
 
-	pub async fn new_with_id(worker_manager: &WorkerManager, id: RoomId) -> Result<Self, Error> {
-		let worker = worker_manager.create_worker({
-			let mut settings = WorkerSettings::default();
-			settings.log_tags = vec![
-				WorkerLogTag::Info,
-				WorkerLogTag::Ice,
-				WorkerLogTag::Dtls,
-				WorkerLogTag::Rtp,
-				WorkerLogTag::Rtcp,
-				WorkerLogTag::Srtp,
-				WorkerLogTag::Rtx,
-				WorkerLogTag::Bwe,
-				WorkerLogTag::Score,
-				WorkerLogTag::Simulcast,
-				WorkerLogTag::Svc,
-				WorkerLogTag::Sctp,
-				WorkerLogTag::Message
-			];
-			settings
-		}).await?;
-
-		let router = worker.create_router(RouterOptions::new(
-			supported_codecs()
-		)).await?;
-
+	pub async fn new_with_id(router: Router, id: RoomId) -> Result<Self, Error> {
 		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
 		println!("Room {id} opened");
 
