@@ -8,6 +8,7 @@ mod sfu_server;
 mod router_dispatch;
 
 use monitor_dispatch::MonitorDispatch;
+use router_dispatch::RouterDispatchConfig;
 use sfu_server::{SFUServer, SFUServerConfig};
 use clap::Parser;
 
@@ -29,7 +30,7 @@ struct Args {
 	/// any other value is bound to max CPU
 	#[arg(short='w', long="max-workers", default_value_t=0)]
 	max_workers: usize,
-	/// The approximate number of consumers (consumer+producer) per worker unit. It might be a bit higher than that in real execution
+	/// The approximate number of consumers per worker unit. It might be a bit higher than that in real execution
 	/// Mediasoup documentation recommands ~500 but it depends on the CPU
 	#[arg(short='c', long="consumers", default_value_t=500)]
 	consumers_per_worker: u32,
@@ -48,8 +49,10 @@ async fn main() {
 
 	let sfu_server = SFUServer::new(SFUServerConfig {
 		port: args.port,
-		max_workers,
-		consumers_per_worker: args.consumers_per_worker,
+		router_dispatch_config: Some(RouterDispatchConfig {
+			max_workers,
+			consumers_per_worker: args.consumers_per_worker,
+		})
 	});
 
 	if args.monitoring_mode != MonitoringMode::NoMonitoring {

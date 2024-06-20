@@ -3,7 +3,7 @@ use std::{env, net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
 use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}, router_dispatch::{self, RouterDispatch, RouterDispatchConfig}};
+use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}, router_dispatch::{RouterDispatch, RouterDispatchConfig}};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
 use crate::security::get_tls_mode_settings;
@@ -16,7 +16,8 @@ struct QueryParameters {
 }
 
 pub struct SFUServerConfig {
-	port: u16,
+	pub port: u16,
+	pub router_dispatch_config: Option<RouterDispatchConfig>
 }
 
 pub struct SFUServerRuntime {
@@ -52,6 +53,7 @@ impl Default for SFUServerConfig {
 	fn default() -> Self {
 		SFUServerConfig {
 			port: 8000,
+			router_dispatch_config: None,
 		}
 	}
 }
@@ -69,7 +71,12 @@ impl SFUServer {
 	pub fn new(config: SFUServerConfig) -> Self {
 		SFUServer {
 			port: config.port,
-			..Default::default()
+			runtime: Arc::new(
+				Mutex::new(
+					SFUServerRuntime::new(
+						config.router_dispatch_config.unwrap_or(RouterDispatchConfig::default()))
+				)
+			)
 		}
 	}
 
@@ -117,7 +124,7 @@ impl SFUServer {
 
 async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server: SFUServer) {
 
-	let mut router_dispatch = server.runtime.lock().router_dispatch.clone();
+	let router_dispatch = server.runtime.lock().router_dispatch.clone();
 	let router = match router_dispatch.create_router().await {
 		Ok(router) => router,
 		Err(e) => {

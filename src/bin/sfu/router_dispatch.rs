@@ -1,7 +1,7 @@
 use std::{num::{NonZeroU32, NonZeroU8}, sync::Arc};
+use event_listener_primitives::HandlerId;
 use mediasoup::{prelude::*, worker::{CreateRouterError, WorkerId, WorkerLogTag}};
 use parking_lot::Mutex;
-use crate::participant::ParticipantConnection;
 
 fn supported_codecs() -> Vec<RtpCodecCapability> {
 	vec![
@@ -36,11 +36,13 @@ pub struct RouterDispatchConfig {
 
 struct WorkerData {
 	worker: Worker,
-	participants: Vec<ParticipantConnection>,
+	consumer_count: u32,
+	attached_handlers: Vec<HandlerId>,
 }
 
 #[derive(Clone)]
 pub struct RouterDispatch {
+	// Todo make this a inner struct for faster cloning
 	worker_manager: WorkerManager,
 	workers: Arc<Mutex<Vec<WorkerData>>>,
 	max_workers: usize,
@@ -66,7 +68,8 @@ impl WorkerData {
 	fn new(worker: Worker) -> Self {
 		WorkerData {
 			worker,
-			participants: Vec::new(),
+			consumer_count: 0,
+			attached_handlers: Vec::new(),
 		}
 	}
 
@@ -79,7 +82,7 @@ impl RouterDispatch {
 	pub fn new(config: RouterDispatchConfig) -> Self {
 		RouterDispatch {
 			worker_manager: WorkerManager::new(),
-			workers: Arc::new(Mutex::new(Vec::new())),
+			workers: Arc::new(Mutex::new(Vec::with_capacity(config.max_workers))),
 			max_workers: config.max_workers,
 			consumers_per_worker: config.consumers_per_worker,
 		}
@@ -87,14 +90,48 @@ impl RouterDispatch {
 
 	/// Creates a new router for use in a room. That router can be dropped if uneeded.
 	/// Note that this might cause the associated worker to die as well
-	pub async fn create_router(&mut self) -> Result<Router, CreateRouterError> {
+	pub async fn create_router(&self) -> Result<Router, CreateRouterError> {
 		let worker = self.get_or_create_appropriate_worker().await;
-		worker.create_router(RouterOptions::new(supported_codecs())).await
+		let router = worker.create_router(RouterOptions::new(supported_codecs())).await?;
+
+		Ok(self.count_consumers_on_router(router))
+	}
+
+	fn count_consumers_on_router(&self, router: Router) -> Router {
+		let worker = router.worker();
+		// ⚠️this is an ugly function
+		let new_transport_handler = router.on_new_transport({
+
+			let workers_ref = self.workers.clone();
+			let associated_worker_id = worker.id();
+			move |new_transport| {
+
+				let new_consumer_handler = new_transport.on_new_consumer(Arc::new({
+					let workers_ref = workers_ref.clone();
+					let associated_worker_id = associated_worker_id.clone();
+					move |consumer| {
+						increase_consumer_count(&workers_ref, &associated_worker_id);
+
+						let consumer_close_handler = consumer.on_close({
+							let workers_ref = workers_ref.clone();
+							let associated_worker_id = associated_worker_id.clone();
+							move || {
+								decrease_consumer_count(&workers_ref, &associated_worker_id);
+						}});
+						push_handler(&workers_ref, &associated_worker_id, consumer_close_handler);
+					}
+				}));
+				push_handler(&workers_ref, &associated_worker_id, new_consumer_handler);
+			}
+		});
+		push_handler(&self.workers, &worker.id(), new_transport_handler);
+		router
 	}
 
 	/// Gets a worker ready to accept new routers or creates one if conditions permit it
 	/// This function can panic if no worker is stored and no worker can be created
-	async fn get_or_create_appropriate_worker(&mut self) -> Worker {
+	async fn get_or_create_appropriate_worker(&self) -> Worker {
+		// Create new workers while the vec is not filled
 		if self.workers.lock().len() < self.max_workers {
 			let worker_maybe = self.worker_manager.create_worker({
 				let mut settings = WorkerSettings::default();
@@ -119,7 +156,7 @@ impl RouterDispatch {
 			match worker_maybe {
 				Ok(worker) => {
 					self.workers.lock().push(WorkerData::new(worker.clone()));
-					worker.on_dead({
+					let handler = worker.on_dead({
 						let workers = self.workers.clone();
 						let worker_id = worker.id();
 						move |r| {
@@ -127,6 +164,7 @@ impl RouterDispatch {
 							RouterDispatch::on_worker_dead(workers, worker_id);
 						}
 					});
+					push_handler(&self.workers, &worker.id(), handler);
 					return worker;
 				},
 				Err(e) => {
@@ -148,12 +186,39 @@ impl RouterDispatch {
 			.position(|w| w.worker.id() == worker_id) {
 				Some(index) => {
 					let worker_last_breath = workers.remove(index);
-					if worker_last_breath.participants.len() > 0 {
+					if worker_last_breath.consumer_count > 0 {
 						log::warn!("A Worker was terminated early but had participants, this should not happen. Their connections will be closed");
 					}
-					todo!("Do some participants closing if needed idk")
+					//todo!("Do some participants closing if needed idk")
 				},
 				None => log::error!("A worker is dead but couldn't be found in the workers list")
 		};
+	}
+}
+
+// Some utility functions for when consumers are added or removed
+fn push_handler(workers: &Arc<Mutex<Vec<WorkerData>>>, worker_id: &WorkerId, handler_id: HandlerId) {
+	let mut workers = workers.lock();
+	let worker_maybe = workers.iter_mut().find(|w| w.worker.id() == *worker_id);
+	if let Some(worker_data) = worker_maybe {
+		worker_data.attached_handlers.push(handler_id);
+	}
+}
+
+fn increase_consumer_count(workers: &Arc<Mutex<Vec<WorkerData>>>, worker_id: &WorkerId) {
+	let mut workers = workers.lock();
+	let worker_maybe = workers.iter_mut().find(|w| w.worker.id() == *worker_id);
+	if let Some(worker_data) = worker_maybe {
+		worker_data.consumer_count += 1;
+	}
+}
+
+fn decrease_consumer_count(workers: &Arc<Mutex<Vec<WorkerData>>>, worker_id: &WorkerId) {
+	let mut workers = workers.lock();
+	let worker_maybe = workers.iter_mut().find(|w| w.worker.id() == *worker_id);
+	if let Some(worker_data) = worker_maybe {
+		if worker_data.consumer_count > 0 {
+			worker_data.consumer_count -= 1;
+		}
 	}
 }
