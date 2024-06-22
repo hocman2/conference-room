@@ -3,7 +3,7 @@ use std::{env, net::{Ipv4Addr, SocketAddrV4}, sync::Arc};
 use confroom_server::{monitoring::SFUEvent, uuids::RoomId};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use crate::{monitor_dispatch::MonitorDispatch, participant::{ParticipantConnection, ANNOUNCED_ADDRESS_ENV_KEY}, router_dispatch::{RouterDispatch, RouterDispatchConfig}};
+use crate::{monitor_dispatch::MonitorDispatch, participant::ParticipantConnection, router_dispatch::{RouterDispatch, RouterDispatchConfig, ANNOUNCED_ADDRESS_ENV_KEY}};
 use crate::room::Room;
 use crate::rooms_registry::RoomsRegistry;
 use crate::security::get_tls_mode_settings;
@@ -125,8 +125,8 @@ impl SFUServer {
 async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server: SFUServer) {
 
 	let router_dispatch = server.runtime.lock().router_dispatch.clone();
-	let router = match router_dispatch.create_router().await {
-		Ok(router) => router,
+	let (router, webrtc_server) = match router_dispatch.create_router().await {
+		Ok(tuple) => tuple,
 		Err(e) => {
 			log::error!("Failed to create router, no room will be fetched/created: {e}");
 			// Return early, don't create any connection
@@ -137,8 +137,8 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 	let room: Room = {
 		let rooms = server.runtime.lock().rooms.clone();
 		let room_maybe = match query_parameters.room_id.clone() {
-			Some(room_id) => rooms.get_or_create(room_id, router).await,
-			None => rooms.create_room(router).await
+			Some(room_id) => rooms.get_or_create(room_id, router, webrtc_server).await,
+			None => rooms.create_room(router, webrtc_server).await
 		};
 
 		match room_maybe {

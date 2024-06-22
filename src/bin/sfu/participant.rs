@@ -1,8 +1,6 @@
 extern crate confroom_server as server;
 
 use std::collections::HashMap;
-use std::env;
-use std::net::{IpAddr, Ipv4Addr};
 
 use confroom_server::monitoring::SFUEvent;
 use confroom_server::uuids::ParticipantId;
@@ -24,8 +22,6 @@ use crate::room::Room;
 use crate::message::*;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
-
-pub const ANNOUNCED_ADDRESS_ENV_KEY: &str = "PUBLIC_IP";
 
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -60,25 +56,9 @@ impl ParticipantConnection {
 	pub async fn new(room: Room) -> Result<Self, Error> {
 
 		let router = room.router();
+		let server = room.webrtc_server();
 
-		let (listen_ip, announced_address) = {
-			if let Ok(public_ip) = env::var(ANNOUNCED_ADDRESS_ENV_KEY) {
-				(Ipv4Addr::UNSPECIFIED, Some(public_ip))
-			} else {
-				(Ipv4Addr::LOCALHOST, None)
-			}
-		};
-
-		let transport_opts = WebRtcTransportOptions::new(WebRtcTransportListenInfos::new(ListenInfo {
-			protocol: Protocol::Udp,
-			ip: IpAddr::V4(listen_ip),
-			announced_address,
-			port: None,
-			port_range: None,
-			flags: None,
-			send_buffer_size: None,
-			recv_buffer_size: None
-		}));
+		let transport_opts = WebRtcTransportOptions::new_with_server(server.to_owned());
 
 		let consumer = router.create_webrtc_transport(
 			transport_opts.clone()

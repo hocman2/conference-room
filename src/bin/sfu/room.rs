@@ -21,6 +21,7 @@ struct Handlers {
 pub struct Inner {
 	id: RoomId,
 	router: Router,
+	webrtc_server: WebRtcServer,
 	clients: Mutex<HashMap<ParticipantId, Vec<Producer>>>,
 	handlers: Handlers,
 }
@@ -48,11 +49,11 @@ pub struct Room {
 	inner: Arc<Inner>
 }
 impl Room {
-	pub async fn new(router: Router) -> Result<Self, Error> {
-		Self::new_with_id(router, RoomId::new()).await
+	pub async fn new(router: Router, webrtc_server: WebRtcServer) -> Result<Self, Error> {
+		Self::new_with_id(router, webrtc_server, RoomId::new()).await
 	}
 
-	pub async fn new_with_id(router: Router, id: RoomId) -> Result<Self, Error> {
+	pub async fn new_with_id(router: Router, webrtc_server: WebRtcServer, id: RoomId) -> Result<Self, Error> {
 		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
 		println!("Room {id} opened");
 
@@ -60,6 +61,7 @@ impl Room {
 			inner: Arc::new(Inner {
 				id,
 				router,
+				webrtc_server,
 				clients: Mutex::new(HashMap::new()),
 				handlers: Handlers::default()
 		 })
@@ -72,7 +74,7 @@ impl Room {
 
 	pub fn id(&self) -> RoomId { self.inner.id }
 	pub fn router(&self) -> &Router { &self.inner.router }
-
+	pub fn webrtc_server(&self) -> &WebRtcServer { &self.inner.webrtc_server }
 	pub fn add_producer(&self, participant_id: ParticipantId, producer: Producer) {
 		self.inner
     		.clients
