@@ -125,8 +125,8 @@ impl SFUServer {
 async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameters, server: SFUServer) {
 
 	let router_dispatch = server.runtime.lock().router_dispatch.clone();
-	let (router, webrtc_server) = match router_dispatch.create_router().await {
-		Ok(tuple) => tuple,
+	let router_data = match router_dispatch.create_router().await {
+		Ok(data) => data,
 		Err(e) => {
 			log::error!("Failed to create router, no room will be fetched/created: {e}");
 			// Return early, don't create any connection
@@ -137,8 +137,8 @@ async fn handle_websocket(websocket: WebSocket, query_parameters: QueryParameter
 	let room: Room = {
 		let rooms = server.runtime.lock().rooms.clone();
 		let room_maybe = match query_parameters.room_id.clone() {
-			Some(room_id) => rooms.get_or_create(room_id, router, webrtc_server).await,
-			None => rooms.create_room(router, webrtc_server).await
+			Some(room_id) => rooms.get_or_create(room_id, router_data).await,
+			None => rooms.create_room(router_data).await
 		};
 
 		match room_maybe {

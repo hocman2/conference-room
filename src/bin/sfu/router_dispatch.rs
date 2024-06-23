@@ -1,7 +1,7 @@
 use std::{env, net::{IpAddr, Ipv4Addr}, num::{NonZeroU32, NonZeroU8}, sync::Arc};
-use event_listener_primitives::HandlerId;
+use event_listener_primitives::{BagOnce, HandlerId};
 use mediasoup::{prelude::*, worker::{CreateRouterError, CreateWebRtcServerError, WorkerId, WorkerLogTag}};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 
 pub const ANNOUNCED_ADDRESS_ENV_KEY: &str = "PUBLIC_IP";
 
@@ -46,6 +46,23 @@ struct WorkerData {
 	consumer_count: u32,
 	/// When the number of router reaches 0 we can release the worker
 	router_count: u32,
+	/// Event called only when a worker dies or closes in an unexpected fashion
+	// This doesn't need to be wrapped into an Arc in theory, but it is just to enforce we are sharing the same
+	// bag between this and data returned in create_router()
+	worker_died_unexpectedly: Arc<BagOnce<Box<dyn FnOnce() + Send + Sync + 'static>>>
+}
+
+pub struct RouterData {
+	pub router: Router,
+	pub webrtc_server: WebRtcServer,
+	worker_died_unexpectedly: Arc<BagOnce<Box<dyn FnOnce() + Send + Sync + 'static>>>
+}
+
+impl RouterData {
+	pub fn on_worker_died_unexpectedly<F>(&self, callback: F) -> HandlerId
+	where F: FnOnce() + Send + Sync + 'static {
+		self.worker_died_unexpectedly.add(Box::new(callback))
+	}
 }
 
 #[derive(Clone)]
@@ -54,6 +71,7 @@ pub struct RouterDispatch {
 	worker_manager: WorkerManager,
 	workers: Arc<Mutex<Vec<WorkerData>>>,
 	max_workers: usize,
+	/// this should be used to determine if we've reached the limit of this worker
 	consumers_per_worker: u32,
 }
 
@@ -76,7 +94,7 @@ impl WorkerData {
 	async fn new(worker: Worker) -> Result<Self, String> {
 		let webrtc_server = match WorkerData::create_webrtc_server(&worker).await {
 			Ok(server) => server,
-			Err(e) => {return Err("Failed to create webrtc server: {e}".into());}
+			Err(e) => {return Err(format!("Failed to create webrtc server: {e}").into());}
 		};
 
 		Ok(WorkerData {
@@ -85,6 +103,7 @@ impl WorkerData {
 			attached_handlers: Vec::new(),
 			consumer_count: 0,
 			router_count: 0,
+			worker_died_unexpectedly: Arc::new(BagOnce::default()),
 		})
 	}
 
@@ -134,7 +153,7 @@ impl RouterDispatch {
 
 	/// Creates a new router for use in a room. That router can be dropped if uneeded.
 	/// Note that this might cause the associated worker to die as well
-	pub async fn create_router(&self) -> Result<(Router, WebRtcServer), CreateRouterError> {
+	pub async fn create_router(&self) -> Result<RouterData, CreateRouterError> {
 		let worker = self.get_or_create_appropriate_worker().await;
 		let router = worker.create_router(RouterOptions::new(supported_codecs())).await?;
 
@@ -147,13 +166,17 @@ impl RouterDispatch {
 		});
 		push_handler(&self.workers, &worker.id(), handler);
 
-		let webrtc_server = {
+		let (webrtc_server, worker_died_unexpectedly) = {
 			let workers = self.workers.lock();
 			let worker_data = workers.iter().find(|w| w.worker.id() == worker.id()).unwrap();
-			worker_data.webrtc_server.clone()
+			(worker_data.webrtc_server.clone(), worker_data.worker_died_unexpectedly.clone())
 		};
 
-		Ok((self.count_consumers_on_router(router), webrtc_server))
+		Ok(RouterData {
+			router: self.count_consumers_on_router(router),
+			webrtc_server,
+			worker_died_unexpectedly
+		})
 	}
 
 	fn count_consumers_on_router(&self, router: Router) -> Router {
@@ -259,6 +282,7 @@ impl RouterDispatch {
 					let worker_last_breath = workers.remove(index);
 					if worker_last_breath.consumer_count > 0 {
 						log::warn!("A Worker was terminated early but had participants, this should not happen. Their connections will be closed");
+						worker_last_breath.worker_died_unexpectedly.call_simple();
 					}
 				},
 				None => log::error!("A worker is dead but couldn't be found in the workers list")

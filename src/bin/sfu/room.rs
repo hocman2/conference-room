@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use crate::monitor_dispatch::MonitorDispatch;
+use crate::router_dispatch::RouterData;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -14,7 +15,8 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 struct Handlers {
 	producer_add: Bag<Arc<dyn Fn(&ParticipantId, &Producer) + Send + Sync + 'static>, ParticipantId, Producer>,
 	producer_remove: Bag<Arc<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync + 'static>, ParticipantId, ProducerId>,
-	close: BagOnce<Box<dyn FnOnce() + Send + 'static>>
+	close: BagOnce<Box<dyn FnOnce() + Send + 'static>>,
+	fatal_error: BagOnce<Box<dyn FnOnce() + Send + 'static>>
 }
 
 // Room internal
@@ -49,23 +51,36 @@ pub struct Room {
 	inner: Arc<Inner>
 }
 impl Room {
-	pub async fn new(router: Router, webrtc_server: WebRtcServer) -> Result<Self, Error> {
-		Self::new_with_id(router, webrtc_server, RoomId::new()).await
+	pub async fn new(router_data: RouterData) -> Result<Self, Error> {
+		Self::new_with_id(router_data, RoomId::new()).await
 	}
 
-	pub async fn new_with_id(router: Router, webrtc_server: WebRtcServer, id: RoomId) -> Result<Self, Error> {
+	pub async fn new_with_id(router_data: RouterData, id: RoomId) -> Result<Self, Error> {
 		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
 		println!("Room {id} opened");
 
-		Ok(Room {
+
+
+		let room = Room {
 			inner: Arc::new(Inner {
 				id,
-				router,
-				webrtc_server,
+				router: router_data.router.clone(),
+				webrtc_server: router_data.webrtc_server.clone(),
 				clients: Mutex::new(HashMap::new()),
-				handlers: Handlers::default()
+				handlers: Handlers::default(),
 		 })
-		})
+		};
+
+		// If the worker dies, transmit a message to active participants,
+		// this should cascade in the room closing itself
+		router_data.on_worker_died_unexpectedly({
+			let room = room.clone();
+			move || {
+				room.inner.handlers.fatal_error.call_simple();
+			}
+		});
+
+		Ok(room)
 	}
 
 	pub fn downgrade(&self) -> WeakRoom {
@@ -122,6 +137,10 @@ impl Room {
 		});
 
 		self.inner.handlers.close.add(Box::new(callback))
+	}
+
+	pub fn on_fatal_error<F: FnOnce() + Send + 'static>(&self, callback: F) -> HandlerId {
+		self.inner.handlers.fatal_error.add(Box::new(callback))
 	}
 }
 

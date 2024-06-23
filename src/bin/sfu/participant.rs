@@ -190,6 +190,13 @@ impl ParticipantConnection {
 					}
 				}
 			}));
+
+			attached_handlers.push(room.on_fatal_error({
+				let ch_tx = ch_tx.clone();
+				move || {
+					ch_tx.send(Internal::Close.into());
+				}
+			}));
 		}
 
 		for (participant_id, producer_id) in room.get_all_producers() {
