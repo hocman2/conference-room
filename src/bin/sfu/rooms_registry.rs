@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use confroom_server::uuids::RoomId;
 use crate::room::{WeakRoom, Room};
 use crate::router_dispatch::RouterData;
-use mediasoup::prelude::*;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 

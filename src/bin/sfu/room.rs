@@ -26,6 +26,7 @@ pub struct Inner {
 	webrtc_server: WebRtcServer,
 	clients: Mutex<HashMap<ParticipantId, Vec<Producer>>>,
 	handlers: Handlers,
+	attached_handlers: Mutex<Vec<HandlerId>>,
 }
 impl std::fmt::Display for Inner {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -59,8 +60,6 @@ impl Room {
 		let _ = MonitorDispatch::send_event(SFUEvent::RoomOpened { id: id.clone() });
 		println!("Room {id} opened");
 
-
-
 		let room = Room {
 			inner: Arc::new(Inner {
 				id,
@@ -68,17 +67,18 @@ impl Room {
 				webrtc_server: router_data.webrtc_server.clone(),
 				clients: Mutex::new(HashMap::new()),
 				handlers: Handlers::default(),
+				attached_handlers: Mutex::new(Vec::new()),
 		 })
 		};
 
 		// If the worker dies, transmit a message to active participants,
 		// this should cascade in the room closing itself
-		router_data.on_worker_died_unexpectedly({
+		room.inner.attached_handlers.lock().push(router_data.on_worker_died_unexpectedly({
 			let room = room.clone();
 			move || {
 				room.inner.handlers.fatal_error.call_simple();
 			}
-		});
+		}));
 
 		Ok(room)
 	}

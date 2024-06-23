@@ -194,7 +194,7 @@ impl ParticipantConnection {
 			attached_handlers.push(room.on_fatal_error({
 				let ch_tx = ch_tx.clone();
 				move || {
-					ch_tx.send(Internal::Close.into());
+					let _ = ch_tx.send(Internal::Close.into());
 				}
 			}));
 		}
